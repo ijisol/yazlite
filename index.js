@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
-import fs from "node:fs";
+import { createReadStream, stat } from "node:fs";
 import { PassThrough, Transform } from "node:stream";
-import zlib from "node:zlib";
+import { DeflateRaw, deflateRaw } from "node:zlib";
 import { EventEmitter } from "events";
 import crc32 from "buffer-crc32";
 
@@ -331,14 +331,14 @@ class ZipFile extends EventEmitter {
 
     var entry = new Entry(metadataPath, false, options);
     self.entries.push(entry);
-    fs.stat(realPath, function (err, stats) {
+    stat(realPath, function (err, stats) {
       if (err) return self.emit("error", err);
       if (!stats.isFile()) return self.emit("error", new Error("not a file: " + realPath));
       entry.uncompressedSize = stats.size;
       if (options.mtime == null) entry.setLastModDate(stats.mtime);
       if (options.mode == null) entry.setFileAttributesMode(stats.mode);
       entry.setFileDataPumpFunction(function () {
-        var readStream = fs.createReadStream(realPath);
+        var readStream = createReadStream(realPath);
         entry.state = Entry.FILE_DATA_IN_PROGRESS;
         readStream.on("error", function (err) {
           self.emit("error", err);
@@ -376,7 +376,7 @@ class ZipFile extends EventEmitter {
     if (!entry.compress) {
       setCompressedBuffer(buffer);
     } else {
-      zlib.deflateRaw(buffer, function (err, compressedBuffer) {
+      deflateRaw(buffer, function (err, compressedBuffer) {
         setCompressedBuffer(compressedBuffer);
       });
     }
@@ -449,7 +449,7 @@ function writeToOutputStream(self, buffer) {
 function pumpFileDataReadStream(self, entry, readStream) {
   var crc32Watcher = new Crc32Watcher();
   var uncompressedSizeCounter = new ByteCounter();
-  var compressor = entry.compress ? new zlib.DeflateRaw() : new PassThrough();
+  var compressor = entry.compress ? new DeflateRaw() : new PassThrough();
   var compressedSizeCounter = new ByteCounter();
   readStream.pipe(crc32Watcher)
             .pipe(uncompressedSizeCounter)
