@@ -10,6 +10,7 @@
   ],
   "license": "MIT",
   "author": "Josh Wolfe <thejoshwolfe@gmail.com>",
+  "type": "module",
   "exports": "./index.js",
   "dependencies": {
     "buffer-crc32": "~0.2.3"
