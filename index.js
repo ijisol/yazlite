@@ -1,9 +1,9 @@
-import { Buffer } from "node:buffer";
-import { createReadStream, stat } from "node:fs";
-import { PassThrough, Transform } from "node:stream";
-import { DeflateRaw, deflateRaw } from "node:zlib";
-import { EventEmitter } from "events";
-import crc32 from "buffer-crc32";
+import { Buffer } from 'node:buffer';
+import { createReadStream, stat } from 'node:fs';
+import { PassThrough, Transform } from 'node:stream';
+import { DeflateRaw, deflateRaw } from 'node:zlib';
+import { EventEmitter } from 'events';
+import crc32 from 'buffer-crc32';
 
 const ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE = 56;
 const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE = 20;
@@ -25,13 +25,13 @@ const CENTRAL_DIRECTORY_RECORD_FIXED_SIZE = 46;
 const ZIP64_EXTENDED_INFORMATION_EXTRA_FIELD_SIZE = 28;
 
 const cp437 = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼ !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~⌂ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ';
-if (cp437.length !== 256) throw new Error("assertion failure");
+if (cp437.length !== 256) throw new Error('assertion failure');
 let reverseCp437 = null;
 
 function encodeCp437(string) {
   if (/^[\x20-\x7e]*$/.test(string)) {
     // CP437, ASCII, and UTF-8 overlap in this range.
-    return Buffer.from(string, "utf8");
+    return Buffer.from(string, 'utf8');
   }
 
   // This is the slow path.
@@ -46,7 +46,9 @@ function encodeCp437(string) {
   const result = Buffer.allocUnsafe(string.length);
   for (let i = 0; i < string.length; i++) {
     const b = reverseCp437[string[i]];
-    if (b == null) throw new Error("character not encodable in CP437: " + JSON.stringify(string[i]));
+    if (b == null) {
+      throw new Error(`character not encodable in CP437: ${JSON.stringify(string[i])}`);
+    }
     result[i] = b;
   }
 
@@ -80,7 +82,9 @@ class Entry {
 
   constructor(metadataPath, isDirectory, options) {
     this.utf8FileName = Buffer.from(metadataPath);
-    if (this.utf8FileName.length > 0xffff) throw new Error("utf8 file name too long. " + utf8FileName.length + " > " + 0xffff);
+    if (this.utf8FileName.length > 0xffff) {
+      throw new Error(`utf8 file name too long. ${utf8FileName.length} > ${0xffff}`);
+    }
     this.isDirectory = isDirectory;
     this.state = Entry.WAITING_FOR_METADATA;
     this.setLastModDate(options.mtime != null ? options.mtime : new Date());
@@ -110,13 +114,15 @@ class Entry {
     }
     this.forceZip64Format = !!options.forceZip64Format;
     if (options.fileComment) {
-      if (typeof options.fileComment === "string") {
-        this.fileComment = Buffer.from(options.fileComment, "utf8");
+      if (typeof options.fileComment === 'string') {
+        this.fileComment = Buffer.from(options.fileComment, 'utf8');
       } else {
         // It should be a Buffer
         this.fileComment = options.fileComment;
       }
-      if (this.fileComment.length > 0xffff) throw new Error("fileComment is too large");
+      if (this.fileComment.length > 0xffff) {
+        throw new Error('fileComment is too large');
+      }
     } else {
       // no comment.
       this.fileComment = EMPTY_BUFFER;
@@ -130,7 +136,9 @@ class Entry {
   }
 
   setFileAttributesMode(mode) {
-    if ((mode & 0xffff) !== mode) throw new Error("invalid mode. expected: 0 <= " + mode + " <= " + 0xffff);
+    if ((mode & 0xffff) !== mode) {
+      throw new Error(`invalid mode. expected: 0 <= ${mode} <= ${0xffff}`);
+    }
     // http://unix.stackexchange.com/questions/14705/the-zip-formats-external-file-attribute/14727#14727
     this.externalFileAttributes = (mode << 16) >>> 0;
   }
@@ -332,16 +340,18 @@ class ZipFile extends EventEmitter {
     const entry = new Entry(metadataPath, false, options);
     self.entries.push(entry);
     stat(realPath, function (err, stats) {
-      if (err) return self.emit("error", err);
-      if (!stats.isFile()) return self.emit("error", new Error("not a file: " + realPath));
+      if (err) return self.emit('error', err);
+      if (!stats.isFile()) {
+        return self.emit('error', new Error(`not a file: ${realPath}`));
+      }
       entry.uncompressedSize = stats.size;
       if (options.mtime == null) entry.setLastModDate(stats.mtime);
       if (options.mode == null) entry.setFileAttributesMode(stats.mode);
       entry.setFileDataPumpFunction(function () {
         const readStream = createReadStream(realPath);
         entry.state = Entry.FILE_DATA_IN_PROGRESS;
-        readStream.on("error", function (err) {
-          self.emit("error", err);
+        readStream.on('error', function (err) {
+          self.emit('error', err);
         });
         pumpFileDataReadStream(self, entry, readStream);
       });
@@ -365,9 +375,11 @@ class ZipFile extends EventEmitter {
   addBuffer(buffer, metadataPath, options) {
     const self = this;
     metadataPath = validateMetadataPath(metadataPath, false);
-    if (buffer.length > 0x3fffffff) throw new Error("buffer too large: " + buffer.length + " > " + 0x3fffffff);
+    if (buffer.length > 0x3fffffff) {
+      throw new Error(`buffer too large: ${buffer.length} > ${0x3fffffff}`);
+    }
     if (options == null) options = {};
-    if (options.size != null) throw new Error("options.size not allowed");
+    if (options.size != null) throw new Error('options.size not allowed');
     const entry = new Entry(metadataPath, false, options);
     entry.uncompressedSize = buffer.length;
     entry.crc32 = crc32.unsigned(buffer);
@@ -401,8 +413,8 @@ class ZipFile extends EventEmitter {
     const self = this;
     metadataPath = validateMetadataPath(metadataPath, true);
     if (options == null) options = {};
-    if (options.size != null) throw new Error("options.size not allowed");
-    if (options.compress != null) throw new Error("options.compress not allowed");
+    if (options.size != null) throw new Error('options.size not allowed');
+    if (options.compress != null) throw new Error('options.compress not allowed');
     const entry = new Entry(metadataPath, true, options);
     self.entries.push(entry);
     entry.setFileDataPumpFunction(function () {
@@ -414,7 +426,7 @@ class ZipFile extends EventEmitter {
   }
 
   end(options, finalSizeCallback) {
-    if (typeof options === "function") {
+    if (typeof options === 'function') {
       finalSizeCallback = options;
       options = null;
     }
@@ -424,15 +436,19 @@ class ZipFile extends EventEmitter {
     this.finalSizeCallback = finalSizeCallback;
     this.forceZip64Eocd = !!options.forceZip64Format;
     if (options.comment) {
-      if (typeof options.comment === "string") {
+      if (typeof options.comment === 'string') {
         this.comment = encodeCp437(options.comment);
       } else {
         // It should be a Buffer
         this.comment = options.comment;
       }
-      if (this.comment.length > 0xffff) throw new Error("comment is too large");
+      if (this.comment.length > 0xffff) {
+        throw new Error('comment is too large');
+      }
       // gotta check for this, because the zipfile format is actually ambiguous.
-      if (this.comment.includes(eocdrSignatureBuffer)) throw new Error("comment contains end of central directory record signature");
+      if (this.comment.includes(eocdrSignatureBuffer)) {
+        throw new Error('comment contains end of central directory record signature');
+      }
     } else {
       // no comment.
       this.comment = EMPTY_BUFFER;
@@ -456,12 +472,12 @@ function pumpFileDataReadStream(self, entry, readStream) {
             .pipe(compressor)
             .pipe(compressedSizeCounter)
             .pipe(self.outputStream, {end: false});
-  compressedSizeCounter.on("end", function() {
+  compressedSizeCounter.on('end', function () {
     entry.crc32 = crc32Watcher.crc32;
     if (entry.uncompressedSize == null) {
       entry.uncompressedSize = uncompressedSizeCounter.byteCount;
-    } else {
-      if (entry.uncompressedSize !== uncompressedSizeCounter.byteCount) return self.emit("error", new Error("file data stream has unexpected number of bytes"));
+    } else if (entry.uncompressedSize !== uncompressedSizeCounter.byteCount) {
+      return self.emit('error', new Error('file data stream has unexpected number of bytes'));
     }
     entry.compressedSize = compressedSizeCounter.byteCount;
     self.outputStreamCursor += entry.compressedSize;
@@ -506,7 +522,7 @@ function pumpEntries(self) {
     if (self.ended) {
       // head for the exit
       self.offsetOfStartOfCentralDirectory = self.outputStreamCursor;
-      self.entries.forEach(function(entry) {
+      self.entries.forEach(function (entry) {
         const centralDirectoryRecord = entry.getCentralDirectoryRecord();
         writeToOutputStream(self, centralDirectoryRecord);
       });
@@ -663,16 +679,20 @@ function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe
 }
 
 function validateMetadataPath(metadataPath, isDirectory) {
-  if (metadataPath === "") throw new Error("empty metadataPath");
-  metadataPath = metadataPath.replaceAll("\\", "/");
-  if (/^[a-zA-Z]:/.test(metadataPath) || metadataPath.startsWith("/")) throw new Error("absolute path: " + metadataPath);
-  if (metadataPath.split("/").includes("..")) throw new Error("invalid relative path: " + metadataPath);
-  const looksLikeDirectory = metadataPath.endsWith("/");
+  if (metadataPath === '') throw new Error('empty metadataPath');
+  metadataPath = metadataPath.replaceAll('\\', '/');
+  if (/^[a-zA-Z]:/.test(metadataPath) || metadataPath.startsWith('/')) {
+    throw new Error(`absolute path: ${metadataPath}`);
+  }
+  if (metadataPath.split('/').includes('..')) {
+    throw new Error(`invalid relative path: ${metadataPath}`);
+  }
+  const looksLikeDirectory = metadataPath.endsWith('/');
   if (isDirectory) {
     // append a trailing '/' if necessary.
-    if (!looksLikeDirectory) metadataPath += "/";
-  } else {
-    if (looksLikeDirectory) throw new Error("file path cannot end with '/': " + metadataPath);
+    if (!looksLikeDirectory) metadataPath += '/';
+  } else if (looksLikeDirectory) {
+    throw new Error(`file path cannot end with '/': ${metadataPath}`);
   }
   return metadataPath;
 }
