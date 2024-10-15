@@ -49,8 +49,9 @@ class Entry {
   static FILE_DATA_DONE = 3;
 
   constructor(metadataPath, isDirectory, options) {
-    this.utf8FileName = Buffer.from(metadataPath);
-    if (this.utf8FileName.length > 0xffff) {
+    const utf8FileName = Buffer.from(metadataPath);
+    this.utf8FileName = utf8FileName;
+    if (utf8FileName.length > 0xffff) {
       throw new Error(`utf8 file name too long. ${utf8FileName.length} > 65535`);
     }
     this.isDirectory = isDirectory;
@@ -76,14 +77,12 @@ class Entry {
       this.compress = (options.compress != null) ? !!options.compress : true;
     }
     this.forceZip64Format = !!options.forceZip64Format;
-    if (options.fileComment) {
-      if (typeof options.fileComment === 'string') {
-        this.fileComment = Buffer.from(options.fileComment, 'utf8');
-      } else {
-        // It should be a Buffer
-        this.fileComment = options.fileComment;
-      }
-      if (this.fileComment.length > 0xffff) {
+    const fileComment = options.fileComment;
+    if (fileComment) {
+      const fileCommentBuffer = (typeof fileComment === 'string') ? Buffer.from(fileComment, 'utf8') : fileComment;
+      // It should be a Buffer
+      this.fileComment = fileCommentBuffer;
+      if (fileCommentBuffer.length > 0xffff) {
         throw new Error('fileComment is too large');
       }
     } else {
@@ -335,8 +334,9 @@ class ZipFile extends EventEmitter {
 
   addBuffer(buffer, metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, false);
-    if (buffer.length > 0x3fffffff) {
-      throw new Error(`buffer too large: ${buffer.length} > ${0x3fffffff}`);
+    const bufferLength = buffer.length;
+    if (bufferLength > 0x3fffffff) {
+      throw new Error(`buffer too large: ${bufferLength} > 1073741823`);
     }
     options ??= {};
     if (options.size != null) throw new Error('options.size not allowed');
@@ -356,7 +356,7 @@ class ZipFile extends EventEmitter {
       });
       pumpEntries(this);
     };
-    entry.uncompressedSize = buffer.length;
+    entry.uncompressedSize = bufferLength;
     entry.crc32 = crc32(buffer);
     entry.crcAndFileSizeKnown = true;
     this.entries.push(entry);
@@ -385,30 +385,33 @@ class ZipFile extends EventEmitter {
   }
 
   end(options, finalSizeCallback) {
+    if (this.ended) return;
     if (typeof options === 'function') {
       finalSizeCallback = options;
       options = {};
     } else {
       options ??= {};
     }
-    if (this.ended) return;
     this.ended = true;
     this.finalSizeCallback = finalSizeCallback;
     this.forceZip64Eocd = !!options.forceZip64Format;
-    if (options.comment) {
+
+    const comment = options.comment;
+    if (comment) {
       // It should be a Buffer
-      this.comment = options.comment;
-      if (this.comment.length > 0xffff) {
+      this.comment = comment;
+      if (comment.length > 0xffff) {
         throw new Error('comment is too large');
       }
       // gotta check for this, because the zipfile format is actually ambiguous.
-      if (this.comment.includes(eocdrSignatureBuffer)) {
+      if (comment.includes(eocdrSignatureBuffer)) {
         throw new Error('comment contains end of central directory record signature');
       }
     } else {
       // no comment.
       this.comment = EMPTY_BUFFER;
     }
+  
     pumpEntries(this);
   }
 }
@@ -427,7 +430,7 @@ function pumpFileDataReadStream(self, entry, readStream) {
             .pipe(uncompressedSizeCounter)
             .pipe(compressor)
             .pipe(compressedSizeCounter)
-            .pipe(self.outputStream, {end: false});
+            .pipe(self.outputStream, { end: false });
   compressedSizeCounter.on('end', () => {
     entry.crc32 = crc32Watcher.crc32;
     if (entry.uncompressedSize == null) {
@@ -457,8 +460,10 @@ function pumpEntries(self) {
 
   // pump entries
   const entry = (function getFirstNotDoneEntry() {
-    for (let i = 0; i < self.entries.length; i++) {
-      const entry = self.entries[i];
+    const entries = self.entries;
+    const entriesLength = entries.length;
+    for (let i = 0; i < entriesLength; ++i) {
+      const entry = entries[i];
       if (entry.state < Entry.FILE_DATA_DONE) return entry;
     }
     return null;
@@ -490,10 +495,12 @@ function pumpEntries(self) {
 }
 
 function calculateFinalSize(self) {
+  const entries = self.entries;
+  const entriesLength = entries.length;
   let pretendOutputCursor = 0;
   let centralDirectorySize = 0;
-  for (let i = 0; i < self.entries.length; i++) {
-    const entry = self.entries[i];
+  for (let i = 0; i < entriesLength; ++i) {
+    const entry = entries[i];
     // compression is too hard to predict
     if (entry.compress) return -1;
     if (entry.state >= Entry.READY_TO_PUMP_FILE_DATA) {
@@ -526,7 +533,7 @@ function calculateFinalSize(self) {
 
   let endOfCentralDirectorySize = 0;
   if (self.forceZip64Eocd ||
-      self.entries.length >= 0xffff ||
+      entriesLength >= 0xffff ||
       centralDirectorySize >= 0xffff ||
       pretendOutputCursor >= 0xffffffff) {
     // use zip64 end of central directory stuff
@@ -537,9 +544,10 @@ function calculateFinalSize(self) {
 }
 
 function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe) {
+  const entriesLength = self.entries.length;
   let needZip64Format = false;
-  let normalEntriesLength = self.entries.length;
-  if (self.forceZip64Eocd || self.entries.length >= 0xffff) {
+  let normalEntriesLength = entriesLength;
+  if (self.forceZip64Eocd || entriesLength >= 0xffff) {
     normalEntriesLength = 0xffff;
     needZip64Format = true;
   }
@@ -566,7 +574,9 @@ function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe
     }
   }
 
-  const eocdrBuffer = Buffer.allocUnsafe(END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + self.comment.length);
+  const comment = self.comment;
+  const commentLength = comment.length;
+  const eocdrBuffer = Buffer.allocUnsafe(END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + commentLength);
   // end of central dir signature                       4 bytes  (0x06054b50)
   eocdrBuffer.writeUInt32LE(0x06054b50, 0);
   // number of this disk                                2 bytes
@@ -582,9 +592,9 @@ function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe
   // offset of start of central directory with respect to the starting disk number  4 bytes
   eocdrBuffer.writeUInt32LE(normalOffsetOfStartOfCentralDirectory, 16);
   // .ZIP file comment length                           2 bytes
-  eocdrBuffer.writeUInt16LE(self.comment.length, 20);
+  eocdrBuffer.writeUInt16LE(commentLength, 20);
   // .ZIP file comment                                  (variable size)
-  self.comment.copy(eocdrBuffer, 22);
+  comment.copy(eocdrBuffer, 22);
 
   if (!needZip64Format) return eocdrBuffer;
 
@@ -604,16 +614,15 @@ function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe
   // number of the disk with the start of the central directory                     4 bytes
   zip64EocdrBuffer.writeUInt32LE(0, 20);
   // total number of entries in the central directory on this disk                  8 bytes
-  writeUInt64LE(zip64EocdrBuffer, self.entries.length, 24);
+  writeUInt64LE(zip64EocdrBuffer, entriesLength, 24);
   // total number of entries in the central directory                               8 bytes
-  writeUInt64LE(zip64EocdrBuffer, self.entries.length, 32);
+  writeUInt64LE(zip64EocdrBuffer, entriesLength, 32);
   // size of the central directory                                                  8 bytes
   writeUInt64LE(zip64EocdrBuffer, sizeOfCentralDirectory, 40);
   // offset of start of central directory with respect to the starting disk number  8 bytes
   writeUInt64LE(zip64EocdrBuffer, self.offsetOfStartOfCentralDirectory, 48);
   // zip64 extensible data sector                                                   (variable size)
   // nothing in the zip64 extensible data sector
-
 
   // ZIP64 End of Central Directory Locator
   const zip64EocdlBuffer = Buffer.allocUnsafe(ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE);
@@ -637,7 +646,7 @@ function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe
 function validateMetadataPath(metadataPath, isDirectory) {
   if (metadataPath === '') throw new Error('empty metadataPath');
   metadataPath = metadataPath.replaceAll('\\', '/');
-  if (/^[a-zA-Z]:/.test(metadataPath) || metadataPath.startsWith('/')) {
+  if (/^[A-Za-z]:/.test(metadataPath) || metadataPath.startsWith('/')) {
     throw new Error(`absolute path: ${metadataPath}`);
   }
   if (metadataPath.split('/').includes('..')) {
