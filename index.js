@@ -26,18 +26,18 @@ const ZIP64_EXTENDED_INFORMATION_EXTRA_FIELD_SIZE = 28;
 class ByteCounter extends Transform {
   byteCount = 0;
 
-  _transform(chunk, encoding, cb) {
+  _transform(chunk, encoding, callback) {
     this.byteCount += chunk.length;
-    cb(null, chunk);
+    callback(null, chunk);
   }
 }
 
 class Crc32Watcher extends Transform {
   crc32 = 0;
 
-  _transform(chunk, encoding, cb) {
+  _transform(chunk, encoding, callback) {
     this.crc32 = crc32(chunk, this.crc32);
-    cb(null, chunk);
+    callback(null, chunk);
   }
 }
 
@@ -51,16 +51,12 @@ class Entry {
   constructor(metadataPath, isDirectory, options) {
     this.utf8FileName = Buffer.from(metadataPath);
     if (this.utf8FileName.length > 0xffff) {
-      throw new Error(`utf8 file name too long. ${utf8FileName.length} > ${0xffff}`);
+      throw new Error(`utf8 file name too long. ${utf8FileName.length} > 65535`);
     }
     this.isDirectory = isDirectory;
     this.state = Entry.WAITING_FOR_METADATA;
-    this.setLastModDate(options.mtime != null ? options.mtime : new Date());
-    if (options.mode != null) {
-      this.setFileAttributesMode(options.mode);
-    } else {
-      this.setFileAttributesMode(isDirectory ? 0o40775 : 0o100664);
-    }
+    this.setLastModDate(options.mtime ?? new Date());
+    this.setFileAttributesMode(options.mode ?? (isDirectory ? 0o40775 : 0o100664));
     if (isDirectory) {
       this.crcAndFileSizeKnown = true;
       this.crc32 = 0;
@@ -70,15 +66,14 @@ class Entry {
       // unknown so far
       this.crcAndFileSizeKnown = false;
       this.crc32 = null;
-      this.uncompressedSize = null;
+      this.uncompressedSize = options.size ?? null;
       this.compressedSize = null;
-      if (options.size != null) this.uncompressedSize = options.size;
     }
     if (isDirectory) {
       this.compress = false;
     } else {
-      this.compress = true; // default
-      if (options.compress != null) this.compress = !!options.compress;
+      // default is true
+      this.compress = (options.compress != null) ? !!options.compress : true;
     }
     this.forceZip64Format = !!options.forceZip64Format;
     if (options.fileComment) {
@@ -105,7 +100,7 @@ class Entry {
 
   setFileAttributesMode(mode) {
     if ((mode & 0xffff) !== mode) {
-      throw new Error(`invalid mode. expected: 0 <= ${mode} <= ${0xffff}`);
+      throw new Error(`invalid mode. expected: 0 <= ${mode} <= 65535`);
     }
     // http://unix.stackexchange.com/questions/14705/the-zip-formats-external-file-attribute/14727#14727
     this.externalFileAttributes = (mode << 16) >>> 0;
@@ -302,7 +297,7 @@ class ZipFile extends EventEmitter {
 
   addFile(realPath, metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, false);
-    if (options == null) options = {};
+    options ??= {};
 
     const entry = new Entry(metadataPath, false, options);
     this.entries.push(entry);
@@ -328,7 +323,7 @@ class ZipFile extends EventEmitter {
 
   addReadStream(readStream, metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, false);
-    if (options == null) options = {};
+    options ??= {};
     const entry = new Entry(metadataPath, false, options);
     this.entries.push(entry);
     entry.setFileDataPumpFunction(() => {
@@ -343,7 +338,7 @@ class ZipFile extends EventEmitter {
     if (buffer.length > 0x3fffffff) {
       throw new Error(`buffer too large: ${buffer.length} > ${0x3fffffff}`);
     }
-    if (options == null) options = {};
+    options ??= {};
     if (options.size != null) throw new Error('options.size not allowed');
     const entry = new Entry(metadataPath, false, options);
     const setCompressedBuffer = (compressedBuffer) => {
@@ -376,7 +371,7 @@ class ZipFile extends EventEmitter {
 
   addEmptyDirectory(metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, true);
-    if (options == null) options = {};
+    options ??= {};
     if (options.size != null) throw new Error('options.size not allowed');
     if (options.compress != null) throw new Error('options.compress not allowed');
     const entry = new Entry(metadataPath, true, options);
@@ -392,9 +387,10 @@ class ZipFile extends EventEmitter {
   end(options, finalSizeCallback) {
     if (typeof options === 'function') {
       finalSizeCallback = options;
-      options = null;
+      options = {};
+    } else {
+      options ??= {};
     }
-    if (options == null) options = {};
     if (this.ended) return;
     this.ended = true;
     this.finalSizeCallback = finalSizeCallback;
@@ -460,14 +456,14 @@ function pumpEntries(self) {
   }
 
   // pump entries
-  const entry = getFirstNotDoneEntry();
-  function getFirstNotDoneEntry() {
+  const entry = (function getFirstNotDoneEntry() {
     for (let i = 0; i < self.entries.length; i++) {
       const entry = self.entries[i];
       if (entry.state < Entry.FILE_DATA_DONE) return entry;
     }
     return null;
-  }
+  })();
+
   if (entry != null) {
     // this entry is not done yet
     if (entry.state < Entry.READY_TO_PUMP_FILE_DATA) return; // input file not open yet
@@ -503,9 +499,9 @@ function calculateFinalSize(self) {
     if (entry.state >= Entry.READY_TO_PUMP_FILE_DATA) {
       // if addReadStream was called without providing the size, we can't predict the final size
       if (entry.uncompressedSize == null) return -1;
-    } else {
+    } else if (entry.uncompressedSize == null) {
       // if we're still waiting for fs.stat, we might learn the size someday
-      if (entry.uncompressedSize == null) return null;
+      return null;
     }
     // we know this for sure, and this is important to know if we need ZIP64 format.
     entry.relativeOffsetOfLocalHeader = pretendOutputCursor;
@@ -668,7 +664,7 @@ function dateToDosDateTime(jsDate) {
   time |= (jsDate.getMinutes() & 0x3f) << 5; // 0-59
   time |= (jsDate.getHours() & 0x1f) << 11; // 0-23
 
-  return {date: date, time: time};
+  return { date, time };
 }
 
 function writeUInt64LE(buffer, n, offset) {
