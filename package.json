@@ -11,7 +11,10 @@
   "license": "MIT",
   "author": "Josh Wolfe <thejoshwolfe@gmail.com>",
   "type": "module",
-  "exports": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./cp437": "./cp437.js"
+  },
   "dependencies": {
     "buffer-crc32": "~0.2.3"
   }

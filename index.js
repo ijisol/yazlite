@@ -24,37 +24,6 @@ const ZIP64_DATA_DESCRIPTOR_SIZE = 24;
 const CENTRAL_DIRECTORY_RECORD_FIXED_SIZE = 46;
 const ZIP64_EXTENDED_INFORMATION_EXTRA_FIELD_SIZE = 28;
 
-const cp437 = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼ !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~⌂ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ';
-if (cp437.length !== 256) throw new Error('assertion failure');
-let reverseCp437 = null;
-
-function encodeCp437(string) {
-  if (/^[\x20-\x7e]*$/.test(string)) {
-    // CP437, ASCII, and UTF-8 overlap in this range.
-    return Buffer.from(string, 'utf8');
-  }
-
-  // This is the slow path.
-  if (reverseCp437 == null) {
-    // cache this once
-    reverseCp437 = {};
-    for (let i = 0; i < cp437.length; i++) {
-      reverseCp437[cp437[i]] = i;
-    }
-  }
-
-  const result = Buffer.allocUnsafe(string.length);
-  for (let i = 0; i < string.length; i++) {
-    const b = reverseCp437[string[i]];
-    if (b == null) {
-      throw new Error(`character not encodable in CP437: ${JSON.stringify(string[i])}`);
-    }
-    result[i] = b;
-  }
-
-  return result;
-}
-
 class ByteCounter extends Transform {
   byteCount = 0;
 
@@ -436,12 +405,8 @@ class ZipFile extends EventEmitter {
     this.finalSizeCallback = finalSizeCallback;
     this.forceZip64Eocd = !!options.forceZip64Format;
     if (options.comment) {
-      if (typeof options.comment === 'string') {
-        this.comment = encodeCp437(options.comment);
-      } else {
-        // It should be a Buffer
-        this.comment = options.comment;
-      }
+      // It should be a Buffer
+      this.comment = options.comment;
       if (this.comment.length > 0xffff) {
         throw new Error('comment is too large');
       }
