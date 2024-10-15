@@ -301,47 +301,44 @@ class ZipFile extends EventEmitter {
   forceZip64Eocd = false; // configurable in .end()
 
   addFile(realPath, metadataPath, options) {
-    const self = this;
     metadataPath = validateMetadataPath(metadataPath, false);
     if (options == null) options = {};
 
     const entry = new Entry(metadataPath, false, options);
-    self.entries.push(entry);
-    stat(realPath, function (err, stats) {
-      if (err) return self.emit('error', err);
+    this.entries.push(entry);
+    stat(realPath, (err, stats) => {
+      if (err) return this.emit('error', err);
       if (!stats.isFile()) {
-        return self.emit('error', new Error(`not a file: ${realPath}`));
+        return this.emit('error', new Error(`not a file: ${realPath}`));
       }
       entry.uncompressedSize = stats.size;
       if (options.mtime == null) entry.setLastModDate(stats.mtime);
       if (options.mode == null) entry.setFileAttributesMode(stats.mode);
-      entry.setFileDataPumpFunction(function () {
+      entry.setFileDataPumpFunction(() => {
         const readStream = createReadStream(realPath);
         entry.state = Entry.FILE_DATA_IN_PROGRESS;
-        readStream.on('error', function (err) {
-          self.emit('error', err);
+        readStream.on('error', (err) => {
+          this.emit('error', err);
         });
-        pumpFileDataReadStream(self, entry, readStream);
+        pumpFileDataReadStream(this, entry, readStream);
       });
-      pumpEntries(self);
+      pumpEntries(this);
     });
   }
 
   addReadStream(readStream, metadataPath, options) {
-    const self = this;
     metadataPath = validateMetadataPath(metadataPath, false);
     if (options == null) options = {};
     const entry = new Entry(metadataPath, false, options);
-    self.entries.push(entry);
-    entry.setFileDataPumpFunction(function () {
+    this.entries.push(entry);
+    entry.setFileDataPumpFunction(() => {
       entry.state = Entry.FILE_DATA_IN_PROGRESS;
-      pumpFileDataReadStream(self, entry, readStream);
+      pumpFileDataReadStream(this, entry, readStream);
     });
-    pumpEntries(self);
+    pumpEntries(this);
   }
 
   addBuffer(buffer, metadataPath, options) {
-    const self = this;
     metadataPath = validateMetadataPath(metadataPath, false);
     if (buffer.length > 0x3fffffff) {
       throw new Error(`buffer too large: ${buffer.length} > ${0x3fffffff}`);
@@ -349,48 +346,47 @@ class ZipFile extends EventEmitter {
     if (options == null) options = {};
     if (options.size != null) throw new Error('options.size not allowed');
     const entry = new Entry(metadataPath, false, options);
-    entry.uncompressedSize = buffer.length;
-    entry.crc32 = crc32(buffer);
-    entry.crcAndFileSizeKnown = true;
-    self.entries.push(entry);
-    if (!entry.compress) {
-      setCompressedBuffer(buffer);
-    } else {
-      deflateRaw(buffer, function (err, compressedBuffer) {
-        setCompressedBuffer(compressedBuffer);
-      });
-    }
-    function setCompressedBuffer(compressedBuffer) {
+    const setCompressedBuffer = (compressedBuffer) => {
       entry.compressedSize = compressedBuffer.length;
-      entry.setFileDataPumpFunction(function () {
-        writeToOutputStream(self, compressedBuffer);
-        writeToOutputStream(self, entry.getDataDescriptor());
+      entry.setFileDataPumpFunction(() => {
+        writeToOutputStream(this, compressedBuffer);
+        writeToOutputStream(this, entry.getDataDescriptor());
         entry.state = Entry.FILE_DATA_DONE;
 
         // don't call pumpEntries() recursively.
         // (also, don't call process.nextTick recursively.)
-        setImmediate(function () {
-          pumpEntries(self);
+        setImmediate(() => {
+          pumpEntries(this);
         });
       });
-      pumpEntries(self);
+      pumpEntries(this);
+    };
+    entry.uncompressedSize = buffer.length;
+    entry.crc32 = crc32(buffer);
+    entry.crcAndFileSizeKnown = true;
+    this.entries.push(entry);
+    if (!entry.compress) {
+      setCompressedBuffer(buffer);
+    } else {
+      deflateRaw(buffer, (err, compressedBuffer) => {
+        setCompressedBuffer(compressedBuffer);
+      });
     }
   }
 
   addEmptyDirectory(metadataPath, options) {
-    const self = this;
     metadataPath = validateMetadataPath(metadataPath, true);
     if (options == null) options = {};
     if (options.size != null) throw new Error('options.size not allowed');
     if (options.compress != null) throw new Error('options.compress not allowed');
     const entry = new Entry(metadataPath, true, options);
-    self.entries.push(entry);
-    entry.setFileDataPumpFunction(function () {
-      writeToOutputStream(self, entry.getDataDescriptor());
+    this.entries.push(entry);
+    entry.setFileDataPumpFunction(() => {
+      writeToOutputStream(this, entry.getDataDescriptor());
       entry.state = Entry.FILE_DATA_DONE;
-      pumpEntries(self);
+      pumpEntries(this);
     });
-    pumpEntries(self);
+    pumpEntries(this);
   }
 
   end(options, finalSizeCallback) {
@@ -436,7 +432,7 @@ function pumpFileDataReadStream(self, entry, readStream) {
             .pipe(compressor)
             .pipe(compressedSizeCounter)
             .pipe(self.outputStream, {end: false});
-  compressedSizeCounter.on('end', function () {
+  compressedSizeCounter.on('end', () => {
     entry.crc32 = crc32Watcher.crc32;
     if (entry.uncompressedSize == null) {
       entry.uncompressedSize = uncompressedSizeCounter.byteCount;
@@ -486,7 +482,7 @@ function pumpEntries(self) {
     if (self.ended) {
       // head for the exit
       self.offsetOfStartOfCentralDirectory = self.outputStreamCursor;
-      self.entries.forEach(function (entry) {
+      self.entries.forEach((entry) => {
         const centralDirectoryRecord = entry.getCentralDirectoryRecord();
         writeToOutputStream(self, centralDirectoryRecord);
       });
