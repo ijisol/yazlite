@@ -1,9 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { createReadStream, stat } from 'node:fs';
 import { PassThrough, Transform } from 'node:stream';
-import { DeflateRaw, deflateRaw } from 'node:zlib';
+import { DeflateRaw, crc32, deflateRaw } from 'node:zlib';
 import { EventEmitter } from 'events';
-import crc32 from 'buffer-crc32';
 
 const ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE = 56;
 const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE = 20;
@@ -37,7 +36,7 @@ class Crc32Watcher extends Transform {
   crc32 = 0;
 
   _transform(chunk, encoding, cb) {
-    this.crc32 = crc32.unsigned(chunk, this.crc32);
+    this.crc32 = crc32(chunk, this.crc32);
     cb(null, chunk);
   }
 }
@@ -351,7 +350,7 @@ class ZipFile extends EventEmitter {
     if (options.size != null) throw new Error('options.size not allowed');
     const entry = new Entry(metadataPath, false, options);
     entry.uncompressedSize = buffer.length;
-    entry.crc32 = crc32.unsigned(buffer);
+    entry.crc32 = crc32(buffer);
     entry.crcAndFileSizeKnown = true;
     self.entries.push(entry);
     if (!entry.compress) {
