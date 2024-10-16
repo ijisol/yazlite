@@ -4,9 +4,14 @@ import { createReadStream, stat } from 'node:fs';
 import { PassThrough, Transform } from 'node:stream';
 import { DeflateRaw, crc32, deflateRaw } from 'node:zlib';
 
-const ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE = 56;
-const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE = 20;
-const END_OF_CENTRAL_DIRECTORY_RECORD_SIZE = 22;
+/** ZIP64 end of central directory record size */
+const ZIP64_EOCDR_SIZE = 56;
+
+/** ZIP64 end of central directory locator size */
+const ZIP64_EOCDL_SIZE = 20;
+
+/** End of central directory record size */
+const EOCDR_SIZE = 22;
 
 const EMPTY_BUFFER = Buffer.allocUnsafe(0);
 
@@ -20,8 +25,11 @@ const UNKNOWN_CRC32_AND_FILE_SIZES = 1 << 3;
 const DATA_DESCRIPTOR_SIZE = 16;
 const ZIP64_DATA_DESCRIPTOR_SIZE = 24;
 
-const CENTRAL_DIRECTORY_RECORD_FIXED_SIZE = 46;
-const ZIP64_EXTENDED_INFORMATION_EXTRA_FIELD_SIZE = 28;
+/** Central directory record fixed size */
+const CDR_FIXED_SIZE = 46;
+
+/** ZIP64 extended information extra field size */
+const ZIP64_EIEF_SIZE = 28;
 
 class ByteCounter extends Transform {
   byteCount = 0;
@@ -41,6 +49,16 @@ class Crc32Watcher extends Transform {
   }
 }
 
+/**
+ * @typedef {Object} Options
+ * @property {?Date} [mtime]
+ * @property {?number} [mode]
+ * @property {?boolean} [compress]
+ * @property {?boolean} [forceZip64Format]
+ * @property {?(Buffer|string)} [fileComment]
+ * @property {?number} [size]
+ */
+
 // this class is not part of the public API
 class Entry {
   static WAITING_FOR_METADATA = 0;
@@ -48,6 +66,11 @@ class Entry {
   static FILE_DATA_IN_PROGRESS = 2;
   static FILE_DATA_DONE = 3;
 
+  /**
+   * @param {string} metadataPath
+   * @param {boolean} isDirectory
+   * @param {Options} options
+   */
   constructor(metadataPath, isDirectory, options) {
     const utf8FileName = Buffer.from(metadataPath);
     this.utf8FileName = utf8FileName;
@@ -91,6 +114,9 @@ class Entry {
     }
   }
 
+  /**
+   * @param {Date} date
+   */
   setLastModDate(date) {
     let dosDate = 0;
     dosDate |= date.getDate() & 0x1f; // 1-31
@@ -106,6 +132,9 @@ class Entry {
     this.lastModFileDate = dosDate;
   }
 
+  /**
+   * @param {number} mode
+   */
   setFileAttributesMode(mode) {
     if ((mode & 0xffff) !== mode) {
       throw new Error(`invalid mode. expected: 0 <= ${mode} <= 65535`);
@@ -114,12 +143,18 @@ class Entry {
     this.externalFileAttributes = (mode << 16) >>> 0;
   }
 
-  // doFileDataPump() should not call pumpEntries() directly. see issue #9.
+  /**
+   * @param {Function} doFileDataPump
+   */
   setFileDataPumpFunction(doFileDataPump) {
+    // doFileDataPump() should not call pumpEntries() directly. see issue #9.
     this.doFileDataPump = doFileDataPump;
     this.state = Entry.READY_TO_PUMP_FILE_DATA;
   }
 
+  /**
+   * @returns {boolean}
+   */
   useZip64Format() {
     return (
       (this.forceZip64Format) ||
@@ -129,6 +164,9 @@ class Entry {
     );
   }
 
+  /**
+   * @returns {Buffer}
+   */
   getLocalFileHeader() {
     let crc32 = 0;
     let compressedSize = 0;
@@ -174,6 +212,9 @@ class Entry {
     ]);
   }
 
+  /**
+   * @returns {Buffer}
+   */
   getDataDescriptor() {
     if (this.crcAndFileSizeKnown) {
       // the Mac Archive Utility requires this not be present unless we set general purpose bit 3
@@ -205,8 +246,11 @@ class Entry {
     }
   }
 
+  /**
+   * @returns {Buffer}
+   */
   getCentralDirectoryRecord() {
-    const fixedSizeStuff = Buffer.allocUnsafe(CENTRAL_DIRECTORY_RECORD_FIXED_SIZE);
+    const fixedSizeStuff = Buffer.allocUnsafe(CDR_FIXED_SIZE);
     let generalPurposeBitFlag = FILE_NAME_IS_UTF8;
     if (!this.crcAndFileSizeKnown) generalPurposeBitFlag |= UNKNOWN_CRC32_AND_FILE_SIZES;
 
@@ -222,11 +266,11 @@ class Entry {
       versionNeededToExtract = VERSION_NEEDED_TO_EXTRACT_ZIP64;
 
       // ZIP64 extended information extra field
-      zeiefBuffer = Buffer.allocUnsafe(ZIP64_EXTENDED_INFORMATION_EXTRA_FIELD_SIZE);
+      zeiefBuffer = Buffer.allocUnsafe(ZIP64_EIEF_SIZE);
       // 0x0001                  2 bytes    Tag for this "extra" block type
       zeiefBuffer.writeUInt16LE(0x0001, 0);
       // Size                    2 bytes    Size of this "extra" block
-      zeiefBuffer.writeUInt16LE(ZIP64_EXTENDED_INFORMATION_EXTRA_FIELD_SIZE - 4, 2);
+      zeiefBuffer.writeUInt16LE(ZIP64_EIEF_SIZE - 4, 2);
       // Original Size           8 bytes    Original uncompressed file size
       zeiefBuffer.writeBigUInt64LE(BigInt(this.uncompressedSize), 4);
       // Compressed Size         8 bytes    Size of compressed data
@@ -286,6 +330,9 @@ class Entry {
     ]);
   }
 
+  /**
+   * @returns {0|8}
+   */
   getCompressionMethod() {
     const NO_COMPRESSION = 0;
     const DEFLATE_COMPRESSION = 8;
@@ -303,6 +350,11 @@ class ZipFile extends EventEmitter {
   allDone = false; // set when we've written the last bytes
   forceZip64Eocd = false; // configurable in .end()
 
+  /**
+   * @param {string} realPath
+   * @param {string} metadataPath
+   * @param {?Options} [options]
+   */
   addFile(realPath, metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, false);
     options ??= {};
@@ -329,6 +381,11 @@ class ZipFile extends EventEmitter {
     });
   }
 
+  /**
+   * @param {ReadStream} readStream
+   * @param {string} metadataPath
+   * @param {?Options} [options]
+   */
   addReadStream(readStream, metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, false);
     options ??= {};
@@ -341,6 +398,11 @@ class ZipFile extends EventEmitter {
     pumpEntries(this);
   }
 
+  /**
+   * @param {Buffer} buffer
+   * @param {string} metadataPath
+   * @param {?Options} [options]
+   */
   addBuffer(buffer, metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, false);
     const bufferLength = buffer.length;
@@ -378,6 +440,10 @@ class ZipFile extends EventEmitter {
     }
   }
 
+  /**
+   * @param {string} metadataPath
+   * @param {?Options} [options]
+   */
   addEmptyDirectory(metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, true);
     options ??= {};
@@ -393,6 +459,10 @@ class ZipFile extends EventEmitter {
     pumpEntries(this);
   }
 
+  /**
+   * @param {?Function|Options} [options]
+   * @param {?Function} [finalSizeCallback]
+   */
   end(options, finalSizeCallback) {
     if (this.ended) return;
     if (typeof options === 'function') {
@@ -425,11 +495,20 @@ class ZipFile extends EventEmitter {
   }
 }
 
+/**
+ * @param {ZipFile} zipfile
+ * @param {Buffer} buffer
+ */
 function writeToOutputStream(zipfile, buffer) {
   zipfile.outputStream.write(buffer);
   zipfile.outputStreamCursor += buffer.length;
 }
 
+/**
+ * @param {ZipFile} zipfile
+ * @param {Entry} entry
+ * @param {ReadStream} readStream
+ */
 function pumpFileDataReadStream(zipfile, entry, readStream) {
   const crc32Watcher = new Crc32Watcher();
   const uncompressedSizeCounter = new ByteCounter();
@@ -455,6 +534,9 @@ function pumpFileDataReadStream(zipfile, entry, readStream) {
   });
 }
 
+/**
+ * @param {ZipFile} zipfile
+ */
 function getFirstNotDoneEntry(zipfile) {
   const entries = zipfile.entries;
   const entriesLength = entries.length;
@@ -465,6 +547,9 @@ function getFirstNotDoneEntry(zipfile) {
   return null;
 }
 
+/**
+ * @param {ZipFile} zipfile
+ */
 function pumpEntries(zipfile) {
   if (zipfile.allDone) return;
   // first check if finalSize is finally known
@@ -504,6 +589,10 @@ function pumpEntries(zipfile) {
   }
 }
 
+/**
+ * @param {ZipFile} zipfile
+ * @returns {number|null}
+ */
 function calculateFinalSize(zipfile) {
   const entries = zipfile.entries;
   const entriesLength = entries.length;
@@ -532,9 +621,9 @@ function calculateFinalSize(zipfile) {
       pretendOutputCursor += useZip64Format ? ZIP64_DATA_DESCRIPTOR_SIZE : DATA_DESCRIPTOR_SIZE;
     }
 
-    centralDirectorySize += CENTRAL_DIRECTORY_RECORD_FIXED_SIZE + entry.utf8FileName.length + entry.fileComment.length;
+    centralDirectorySize += CDR_FIXED_SIZE + entry.utf8FileName.length + entry.fileComment.length;
     if (useZip64Format) {
-      centralDirectorySize += ZIP64_EXTENDED_INFORMATION_EXTRA_FIELD_SIZE;
+      centralDirectorySize += ZIP64_EIEF_SIZE;
     }
   }
 
@@ -544,12 +633,16 @@ function calculateFinalSize(zipfile) {
       centralDirectorySize >= 0xffff ||
       pretendOutputCursor >= 0xffffffff) {
     // use zip64 end of central directory stuff
-    endOfCentralDirectorySize += ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE;
+    endOfCentralDirectorySize += ZIP64_EOCDR_SIZE + ZIP64_EOCDL_SIZE;
   }
-  endOfCentralDirectorySize += END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + zipfile.comment.length;
+  endOfCentralDirectorySize += EOCDR_SIZE + zipfile.comment.length;
   return pretendOutputCursor + centralDirectorySize + endOfCentralDirectorySize;
 }
 
+/**
+ * @param {ZipFile} zipfile
+ * @returns {Buffer}
+ */
 function getEndOfCentralDirectoryRecord(zipfile) {
   const entriesLength = zipfile.entries.length;
   let needZip64Format = false;
@@ -574,7 +667,7 @@ function getEndOfCentralDirectoryRecord(zipfile) {
 
   const comment = zipfile.comment;
   const commentLength = comment.length;
-  const eocdrBuffer = Buffer.allocUnsafe(END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + commentLength);
+  const eocdrBuffer = Buffer.allocUnsafe(EOCDR_SIZE + commentLength);
   // end of central dir signature                       4 bytes  (0x06054b50)
   eocdrBuffer.writeUInt32LE(0x06054b50, 0);
   // number of this disk                                2 bytes
@@ -598,11 +691,11 @@ function getEndOfCentralDirectoryRecord(zipfile) {
 
   // ZIP64 format
   // ZIP64 End of Central Directory Record
-  const zip64EocdrBuffer = Buffer.allocUnsafe(ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE);
+  const zip64EocdrBuffer = Buffer.allocUnsafe(ZIP64_EOCDR_SIZE);
   // zip64 end of central dir signature                                             4 bytes  (0x06064b50)
   zip64EocdrBuffer.writeUInt32LE(0x06064b50, 0);
   // size of zip64 end of central directory record                                  8 bytes
-  zip64EocdrBuffer.writeBigUInt64LE(BigInt(ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE - 12), 4);
+  zip64EocdrBuffer.writeBigUInt64LE(BigInt(ZIP64_EOCDR_SIZE - 12), 4);
   // version made by                                                                2 bytes
   zip64EocdrBuffer.writeUInt16LE(VERSION_MADE_BY, 12);
   // version needed to extract                                                      2 bytes
@@ -623,7 +716,7 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   // nothing in the zip64 extensible data sector
 
   // ZIP64 End of Central Directory Locator
-  const zip64EocdlBuffer = Buffer.allocUnsafe(ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE);
+  const zip64EocdlBuffer = Buffer.allocUnsafe(ZIP64_EOCDL_SIZE);
   // zip64 end of central dir locator signature                               4 bytes  (0x07064b50)
   zip64EocdlBuffer.writeUInt32LE(0x07064b50, 0);
   // number of the disk with the start of the zip64 end of central directory  4 bytes
@@ -640,6 +733,11 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   ]);
 }
 
+/**
+ * @param {string} metadataPath
+ * @param {boolean} isDirectory
+ * @returns {string}
+ */
 function validateMetadataPath(metadataPath, isDirectory) {
   if (metadataPath === '') throw new Error('empty metadataPath');
   metadataPath = metadataPath.replaceAll('\\', '/');
