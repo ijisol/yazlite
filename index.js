@@ -539,7 +539,7 @@ function calculateFinalSize(zipfile) {
   return pretendOutputCursor + centralDirectorySize + endOfCentralDirectorySize;
 }
 
-function getEndOfCentralDirectoryRecord(zipfile, actuallyJustTellMeHowLongItWouldBe) {
+function getEndOfCentralDirectoryRecord(zipfile) {
   const entriesLength = zipfile.entries.length;
   let needZip64Format = false;
   let normalEntriesLength = entriesLength;
@@ -559,17 +559,6 @@ function getEndOfCentralDirectoryRecord(zipfile, actuallyJustTellMeHowLongItWoul
   if (zipfile.forceZip64Eocd || zipfile.offsetOfStartOfCentralDirectory >= 0xffffffff) {
     normalOffsetOfStartOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
-  }
-
-  if (!actuallyJustTellMeHowLongItWouldBe) {
-  } else if (needZip64Format) {
-    return (
-      ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE +
-      ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE +
-      END_OF_CENTRAL_DIRECTORY_RECORD_SIZE
-    );
-  } else {
-    return END_OF_CENTRAL_DIRECTORY_RECORD_SIZE;
   }
 
   const comment = zipfile.comment;
