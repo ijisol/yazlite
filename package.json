@@ -16,6 +16,16 @@
     ".": "./index.js",
     "./cp437": "./cp437.js"
   },
+  "scripts": {
+    "test": "node test/test.js",
+    "test-cov": "istanbul cover test/test.js",
+    "test-travis": "istanbul cover --report lcovonly test/test.js"
+  },
+  "devDependencies": {
+    "bl": "~0.9.3",
+    "istanbul": "^0.4.5",
+    "yauzl": "~2.3.1"
+  },
   "engines": {
     "node": ">=22"
   }
