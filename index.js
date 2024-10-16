@@ -284,6 +284,8 @@ class Entry {
   }
 }
 
+const eocdrSignatureBuffer = Buffer.of(0x50, 0x4b, 0x05, 0x06);
+
 class ZipFile extends EventEmitter {
   outputStream = new PassThrough();
   entries = [];
@@ -402,7 +404,7 @@ class ZipFile extends EventEmitter {
         throw new Error('comment is too large');
       }
       // gotta check for this, because the zipfile format is actually ambiguous.
-      if (comment.includes(0x504b0506)) {
+      if (comment.includes(eocdrSignatureBuffer)) {
         throw new Error('comment contains end of central directory record signature');
       }
     } else {
