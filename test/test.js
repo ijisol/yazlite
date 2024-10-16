@@ -1,9 +1,9 @@
 import { createReadStream, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { BufferListStream } from 'bl';
 import { fromBuffer } from 'yauzl';
-import { ZipFile } from '../index.js';
 import { encodeCp437 } from '../cp437.js';
+import { ZipFile } from '../index.js';
+import { BufferListStream } from './lib/bl.js';
 
 const filename = fileURLToPath(import.meta.url);
 
