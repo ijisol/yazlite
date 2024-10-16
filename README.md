@@ -255,11 +255,6 @@ This stream will remain open while you add entries until you `end()` the zip fil
 As a reminder, be careful using both `.on('data')` and `.pipe()` with this stream.
 In certain versions of node, you cannot use both `.on('data')` and `.pipe()` successfully.
 
-### dateToDosDateTime(jsDate)
-
-`jsDate` is a `Date` instance.
-Returns `{date: date, time: time}`, where `date` and `time` are unsigned 16-bit integers.
-
 ## Regarding ZIP64 Support
 
 yazl automatically uses ZIP64 format to support files and archives over `2^32 - 2` bytes (~4GB) in size

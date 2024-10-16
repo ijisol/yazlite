@@ -92,9 +92,18 @@ class Entry {
   }
 
   setLastModDate(date) {
-    const dosDateTime = dateToDosDateTime(date);
-    this.lastModFileTime = dosDateTime.time;
-    this.lastModFileDate = dosDateTime.date;
+    let dosDate = 0;
+    dosDate |= date.getDate() & 0x1f; // 1-31
+    dosDate |= ((date.getMonth() + 1) & 0xf) << 5; // 0-11, 1-12
+    dosDate |= ((date.getFullYear() - 1980) & 0x7f) << 9; // 0-128, 1980-2108
+  
+    let dosTime = 0;
+    dosTime |= Math.floor(date.getSeconds() / 2); // 0-59, 0-29 (lose odd numbers)
+    dosTime |= (date.getMinutes() & 0x3f) << 5; // 0-59
+    dosTime |= (date.getHours() & 0x1f) << 11; // 0-23
+
+    this.lastModFileTime = dosTime;
+    this.lastModFileDate = dosDate;
   }
 
   setFileAttributesMode(mode) {
@@ -650,18 +659,4 @@ function validateMetadataPath(metadataPath, isDirectory) {
   return metadataPath;
 }
 
-function dateToDosDateTime(jsDate) {
-  let date = 0;
-  date |= jsDate.getDate() & 0x1f; // 1-31
-  date |= ((jsDate.getMonth() + 1) & 0xf) << 5; // 0-11, 1-12
-  date |= ((jsDate.getFullYear() - 1980) & 0x7f) << 9; // 0-128, 1980-2108
-
-  let time = 0;
-  time |= Math.floor(jsDate.getSeconds() / 2); // 0-59, 0-29 (lose odd numbers)
-  time |= (jsDate.getMinutes() & 0x3f) << 5; // 0-59
-  time |= (jsDate.getHours() & 0x1f) << 11; // 0-23
-
-  return { date, time };
-}
-
-export { ZipFile, dateToDosDateTime };
+export { ZipFile };
