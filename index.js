@@ -470,26 +470,26 @@ function pumpEntries(zipfile) {
   const entry = getFirstNotDoneEntry(zipfile);
   if (entry != null) {
     // this entry is not done yet
-    if (entry.state < Entry.READY_TO_PUMP_FILE_DATA) return; // input file not open yet
-    if (entry.state === Entry.FILE_DATA_IN_PROGRESS) return; // we'll get there
+    const entryState = entry.state;
+    if (entryState < Entry.READY_TO_PUMP_FILE_DATA) return; // input file not open yet
+    if (entryState === Entry.FILE_DATA_IN_PROGRESS) return; // we'll get there
     // start with local file header
     entry.relativeOffsetOfLocalHeader = zipfile.outputStreamCursor;
-    const localFileHeader = entry.getLocalFileHeader();
-    writeToOutputStream(zipfile, localFileHeader);
+    writeToOutputStream(zipfile, entry.getLocalFileHeader());
     entry.doFileDataPump();
-  } else {
+  } else if (zipfile.ended) {
     // all cought up on writing entries
-    if (zipfile.ended) {
-      // head for the exit
-      zipfile.offsetOfStartOfCentralDirectory = zipfile.outputStreamCursor;
-      zipfile.entries.forEach((entry) => {
-        const centralDirectoryRecord = entry.getCentralDirectoryRecord();
-        writeToOutputStream(zipfile, centralDirectoryRecord);
-      });
-      writeToOutputStream(zipfile, getEndOfCentralDirectoryRecord(zipfile));
-      zipfile.outputStream.end();
-      zipfile.allDone = true;
+    const entries = zipfile.entries;
+    const entriesLength = entries.length;
+    // head for the exit
+    zipfile.offsetOfStartOfCentralDirectory = zipfile.outputStreamCursor;
+    for (let i = 0; i < entriesLength; ++i) {
+      const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
+      writeToOutputStream(zipfile, centralDirectoryRecord);
     }
+    writeToOutputStream(zipfile, getEndOfCentralDirectoryRecord(zipfile));
+    zipfile.outputStream.end();
+    zipfile.allDone = true;
   }
 }
 
@@ -515,13 +515,10 @@ function calculateFinalSize(zipfile) {
 
     pretendOutputCursor += LOCAL_FILE_HEADER_FIXED_SIZE + entry.utf8FileName.length;
     pretendOutputCursor += entry.uncompressedSize;
+
     if (!entry.crcAndFileSizeKnown) {
       // use a data descriptor
-      if (useZip64Format) {
-        pretendOutputCursor += ZIP64_DATA_DESCRIPTOR_SIZE;
-      } else {
-        pretendOutputCursor += DATA_DESCRIPTOR_SIZE;
-      }
+      pretendOutputCursor += useZip64Format ? ZIP64_DATA_DESCRIPTOR_SIZE : DATA_DESCRIPTOR_SIZE;
     }
 
     centralDirectorySize += CENTRAL_DIRECTORY_RECORD_FIXED_SIZE + entry.utf8FileName.length + entry.fileComment.length;
@@ -550,27 +547,29 @@ function getEndOfCentralDirectoryRecord(zipfile, actuallyJustTellMeHowLongItWoul
     normalEntriesLength = 0xffff;
     needZip64Format = true;
   }
+
   const sizeOfCentralDirectory = zipfile.outputStreamCursor - zipfile.offsetOfStartOfCentralDirectory;
   let normalSizeOfCentralDirectory = sizeOfCentralDirectory;
   if (zipfile.forceZip64Eocd || sizeOfCentralDirectory >= 0xffffffff) {
     normalSizeOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
   }
+
   let normalOffsetOfStartOfCentralDirectory = zipfile.offsetOfStartOfCentralDirectory;
   if (zipfile.forceZip64Eocd || zipfile.offsetOfStartOfCentralDirectory >= 0xffffffff) {
     normalOffsetOfStartOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
   }
-  if (actuallyJustTellMeHowLongItWouldBe) {
-    if (needZip64Format) {
-      return (
-        ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE +
-        ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE +
-        END_OF_CENTRAL_DIRECTORY_RECORD_SIZE
-      );
-    } else {
-      return END_OF_CENTRAL_DIRECTORY_RECORD_SIZE;
-    }
+
+  if (!actuallyJustTellMeHowLongItWouldBe) {
+  } else if (needZip64Format) {
+    return (
+      ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE +
+      ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE +
+      END_OF_CENTRAL_DIRECTORY_RECORD_SIZE
+    );
+  } else {
+    return END_OF_CENTRAL_DIRECTORY_RECORD_SIZE;
   }
 
   const comment = zipfile.comment;
@@ -633,7 +632,6 @@ function getEndOfCentralDirectoryRecord(zipfile, actuallyJustTellMeHowLongItWoul
   zip64EocdlBuffer.writeBigUInt64LE(BigInt(zipfile.outputStreamCursor), 8);
   // total number of disks                                                    4 bytes
   zip64EocdlBuffer.writeUInt32LE(1, 16);
-
 
   return Buffer.concat([
     zip64EocdrBuffer,
