@@ -189,9 +189,9 @@ class Entry {
       // crc-32                          4 bytes
       buffer.writeUInt32LE(this.crc32, 4);
       // compressed size                 8 bytes
-      writeUInt64LE(buffer, this.compressedSize, 8);
+      buffer.writeBigUInt64LE(BigInt(this.compressedSize), 8);
       // uncompressed size               8 bytes
-      writeUInt64LE(buffer, this.uncompressedSize, 16);
+      buffer.writeBigUInt64LE(BigInt(this.uncompressedSize), 16);
       return buffer;
     }
   }
@@ -219,11 +219,11 @@ class Entry {
       // Size                    2 bytes    Size of this "extra" block
       zeiefBuffer.writeUInt16LE(ZIP64_EXTENDED_INFORMATION_EXTRA_FIELD_SIZE - 4, 2);
       // Original Size           8 bytes    Original uncompressed file size
-      writeUInt64LE(zeiefBuffer, this.uncompressedSize, 4);
+      zeiefBuffer.writeBigUInt64LE(BigInt(this.uncompressedSize), 4);
       // Compressed Size         8 bytes    Size of compressed data
-      writeUInt64LE(zeiefBuffer, this.compressedSize, 12);
+      zeiefBuffer.writeBigUInt64LE(BigInt(this.compressedSize), 12);
       // Relative Header Offset  8 bytes    Offset of local header record
-      writeUInt64LE(zeiefBuffer, this.relativeOffsetOfLocalHeader, 20);
+      zeiefBuffer.writeBigUInt64LE(BigInt(this.relativeOffsetOfLocalHeader), 20);
       // Disk Start Number       4 bytes    Number of the disk on which this file starts
       // (omit)
     } else {
@@ -605,7 +605,7 @@ function getEndOfCentralDirectoryRecord(zipfile, actuallyJustTellMeHowLongItWoul
   // zip64 end of central dir signature                                             4 bytes  (0x06064b50)
   zip64EocdrBuffer.writeUInt32LE(0x06064b50, 0);
   // size of zip64 end of central directory record                                  8 bytes
-  writeUInt64LE(zip64EocdrBuffer, ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE - 12, 4);
+  zip64EocdrBuffer.writeBigUInt64LE(BigInt(ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE - 12), 4);
   // version made by                                                                2 bytes
   zip64EocdrBuffer.writeUInt16LE(VERSION_MADE_BY, 12);
   // version needed to extract                                                      2 bytes
@@ -615,13 +615,13 @@ function getEndOfCentralDirectoryRecord(zipfile, actuallyJustTellMeHowLongItWoul
   // number of the disk with the start of the central directory                     4 bytes
   zip64EocdrBuffer.writeUInt32LE(0, 20);
   // total number of entries in the central directory on this disk                  8 bytes
-  writeUInt64LE(zip64EocdrBuffer, entriesLength, 24);
+  zip64EocdrBuffer.writeBigUInt64LE(BigInt(entriesLength), 24);
   // total number of entries in the central directory                               8 bytes
-  writeUInt64LE(zip64EocdrBuffer, entriesLength, 32);
+  zip64EocdrBuffer.writeBigUInt64LE(BigInt(entriesLength), 32);
   // size of the central directory                                                  8 bytes
-  writeUInt64LE(zip64EocdrBuffer, sizeOfCentralDirectory, 40);
+  zip64EocdrBuffer.writeBigUInt64LE(BigInt(sizeOfCentralDirectory), 40);
   // offset of start of central directory with respect to the starting disk number  8 bytes
-  writeUInt64LE(zip64EocdrBuffer, zipfile.offsetOfStartOfCentralDirectory, 48);
+  zip64EocdrBuffer.writeBigUInt64LE(BigInt(zipfile.offsetOfStartOfCentralDirectory), 48);
   // zip64 extensible data sector                                                   (variable size)
   // nothing in the zip64 extensible data sector
 
@@ -632,7 +632,7 @@ function getEndOfCentralDirectoryRecord(zipfile, actuallyJustTellMeHowLongItWoul
   // number of the disk with the start of the zip64 end of central directory  4 bytes
   zip64EocdlBuffer.writeUInt32LE(0, 4);
   // relative offset of the zip64 end of central directory record             8 bytes
-  writeUInt64LE(zip64EocdlBuffer, zipfile.outputStreamCursor, 8);
+  zip64EocdlBuffer.writeBigUInt64LE(BigInt(zipfile.outputStreamCursor), 8);
   // total number of disks                                                    4 bytes
   zip64EocdlBuffer.writeUInt32LE(1, 16);
 
@@ -675,14 +675,6 @@ function dateToDosDateTime(jsDate) {
   time |= (jsDate.getHours() & 0x1f) << 11; // 0-23
 
   return { date, time };
-}
-
-function writeUInt64LE(buffer, n, offset) {
-  // can't use bitshift here, because JavaScript only allows bitshifting on 32-bit integers.
-  const high = Math.floor(n / 0x100000000);
-  const low = n % 0x100000000;
-  buffer.writeUInt32LE(low, offset);
-  buffer.writeUInt32LE(high, offset + 4);
 }
 
 export { ZipFile, dateToDosDateTime };
