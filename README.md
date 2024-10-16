@@ -6,7 +6,7 @@ Generate ZIP files in Node.js; yazl fork with no dependencies.
 
 Josh Wolfe's [yazl](https://github.com/thejoshwolfe/yazl) is a great ZIP library. It's stable, so it's not a big problem that it hasn't been updated for a long time.
 
-But now Node.js 22 became LTS, and it has [a built-in CRC32 checksum method](https://nodejs.org/docs/latest-v22.x/api/zlib.html#zlibcrc32data-value). There's no reason to keep the [buffer-crc32](https://www.npmjs.com/package/buffer-crc32) dependency. However, the state of issues and pull requests in the yazl's repository looks like it will not be updated in the future.
+But now Node.js 20 became LTS, and it has [a built-in CRC32 checksum method](https://nodejs.org/docs/latest-v20.x/api/zlib.html#zlibcrc32data-value). There's no reason to keep the [buffer-crc32](https://www.npmjs.com/package/buffer-crc32) dependency. However, the state of issues and pull requests in the yazl's repository looks like it will not be updated in the future.
 
 The yazlite is a fork of the yazl for removing the dependency and converting legacy code to modern syntax.
 
