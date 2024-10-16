@@ -68,7 +68,7 @@ const filename = fileURLToPath(import.meta.url);
     options.size = 'stream'.length;
     zipfile.addReadStream(new BufferListStream().append('stream'), 'stream.txt', options);
     options.size = null;
-    zipfile.end({forceZip64Format:!!zip64Config[4]}, function (finalSize) {
+    zipfile.end({ forceZip64Format:!!zip64Config[4] }, function (finalSize) {
       if (finalSize === -1) throw new Error('finalSize should be known');
       zipfile.outputStream.pipe(new BufferListStream(function (err, data) {
         if (data.length !== finalSize) {
@@ -145,9 +145,7 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
   ];
   testCases.forEach(function (testCase, i) {
     const zipfile = new ZipFile();
-    zipfile.end({
-      comment: testCase[0],
-    }, function (finalSize) {
+    zipfile.end({ comment: testCase[0] }, function (finalSize) {
       if (finalSize === -1) throw new Error('finalSize should be known');
       zipfile.outputStream.pipe(new BufferListStream(function (err, data) {
         if (err) throw err;
@@ -172,8 +170,8 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
     zipfile.end({
       comment: Buffer.from('01234567890123456789' + '\x50\x4b\x05\x06' + '01234567890123456789')
     });
-  } catch (e) {
-    if (e.toString().includes('comment contains end of central directory record signature')) {
+  } catch (err) {
+    if (err.toString().includes('comment contains end of central directory record signature')) {
       console.log('block eocdr signature in comment: pass');
       return;
     }
