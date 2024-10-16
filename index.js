@@ -416,12 +416,12 @@ class ZipFile extends EventEmitter {
   }
 }
 
-function writeToOutputStream(self, buffer) {
-  self.outputStream.write(buffer);
-  self.outputStreamCursor += buffer.length;
+function writeToOutputStream(zipfile, buffer) {
+  zipfile.outputStream.write(buffer);
+  zipfile.outputStreamCursor += buffer.length;
 }
 
-function pumpFileDataReadStream(self, entry, readStream) {
+function pumpFileDataReadStream(zipfile, entry, readStream) {
   const crc32Watcher = new Crc32Watcher();
   const uncompressedSizeCounter = new ByteCounter();
   const compressor = entry.compress ? new DeflateRaw() : new PassThrough();
@@ -430,72 +430,73 @@ function pumpFileDataReadStream(self, entry, readStream) {
             .pipe(uncompressedSizeCounter)
             .pipe(compressor)
             .pipe(compressedSizeCounter)
-            .pipe(self.outputStream, { end: false });
+            .pipe(zipfile.outputStream, { end: false });
   compressedSizeCounter.on('end', () => {
     entry.crc32 = crc32Watcher.crc32;
     if (entry.uncompressedSize == null) {
       entry.uncompressedSize = uncompressedSizeCounter.byteCount;
     } else if (entry.uncompressedSize !== uncompressedSizeCounter.byteCount) {
-      return self.emit('error', new Error('file data stream has unexpected number of bytes'));
+      return zipfile.emit('error', new Error('file data stream has unexpected number of bytes'));
     }
     entry.compressedSize = compressedSizeCounter.byteCount;
-    self.outputStreamCursor += entry.compressedSize;
-    writeToOutputStream(self, entry.getDataDescriptor());
+    zipfile.outputStreamCursor += entry.compressedSize;
+    writeToOutputStream(zipfile, entry.getDataDescriptor());
     entry.state = Entry.FILE_DATA_DONE;
-    pumpEntries(self);
+    pumpEntries(zipfile);
   });
 }
 
-function pumpEntries(self) {
-  if (self.allDone) return;
+function getFirstNotDoneEntry(zipfile) {
+  const entries = zipfile.entries;
+  const entriesLength = entries.length;
+  for (let i = 0; i < entriesLength; ++i) {
+    const entry = entries[i];
+    if (entry.state < Entry.FILE_DATA_DONE) return entry;
+  }
+  return null;
+}
+
+function pumpEntries(zipfile) {
+  if (zipfile.allDone) return;
   // first check if finalSize is finally known
-  if (self.ended && self.finalSizeCallback != null) {
-    const finalSize = calculateFinalSize(self);
+  if (zipfile.ended && zipfile.finalSizeCallback != null) {
+    const finalSize = calculateFinalSize(zipfile);
     if (finalSize != null) {
       // we have an answer
-      self.finalSizeCallback(finalSize);
-      self.finalSizeCallback = null;
+      zipfile.finalSizeCallback(finalSize);
+      zipfile.finalSizeCallback = null;
     }
   }
 
   // pump entries
-  const entry = (function getFirstNotDoneEntry() {
-    const entries = self.entries;
-    const entriesLength = entries.length;
-    for (let i = 0; i < entriesLength; ++i) {
-      const entry = entries[i];
-      if (entry.state < Entry.FILE_DATA_DONE) return entry;
-    }
-    return null;
-  })();
-
+  const entry = getFirstNotDoneEntry(zipfile);
   if (entry != null) {
     // this entry is not done yet
     if (entry.state < Entry.READY_TO_PUMP_FILE_DATA) return; // input file not open yet
     if (entry.state === Entry.FILE_DATA_IN_PROGRESS) return; // we'll get there
     // start with local file header
-    entry.relativeOffsetOfLocalHeader = self.outputStreamCursor;
+    entry.relativeOffsetOfLocalHeader = zipfile.outputStreamCursor;
     const localFileHeader = entry.getLocalFileHeader();
-    writeToOutputStream(self, localFileHeader);
+    writeToOutputStream(zipfile, localFileHeader);
     entry.doFileDataPump();
   } else {
     // all cought up on writing entries
-    if (self.ended) {
+    if (zipfile.ended) {
       // head for the exit
-      self.offsetOfStartOfCentralDirectory = self.outputStreamCursor;
-      self.entries.forEach((entry) => {
+      zipfile.offsetOfStartOfCentralDirectory = zipfile.outputStreamCursor;
+      zipfile.entries.forEach((entry) => {
         const centralDirectoryRecord = entry.getCentralDirectoryRecord();
-        writeToOutputStream(self, centralDirectoryRecord);
+        writeToOutputStream(zipfile, centralDirectoryRecord);
       });
-      writeToOutputStream(self, getEndOfCentralDirectoryRecord(self));
-      self.outputStream.end();
-      self.allDone = true;
+      writeToOutputStream(zipfile, getEndOfCentralDirectoryRecord(zipfile));
+      zipfile.outputStream.end();
+      zipfile.allDone = true;
     }
   }
 }
 
-function calculateFinalSize(self) {
-  const entries = self.entries;
+function calculateFinalSize(zipfile) {
+  const entries = zipfile.entries;
   const entriesLength = entries.length;
   let pretendOutputCursor = 0;
   let centralDirectorySize = 0;
@@ -532,33 +533,33 @@ function calculateFinalSize(self) {
   }
 
   let endOfCentralDirectorySize = 0;
-  if (self.forceZip64Eocd ||
+  if (zipfile.forceZip64Eocd ||
       entriesLength >= 0xffff ||
       centralDirectorySize >= 0xffff ||
       pretendOutputCursor >= 0xffffffff) {
     // use zip64 end of central directory stuff
     endOfCentralDirectorySize += ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE;
   }
-  endOfCentralDirectorySize += END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + self.comment.length;
+  endOfCentralDirectorySize += END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + zipfile.comment.length;
   return pretendOutputCursor + centralDirectorySize + endOfCentralDirectorySize;
 }
 
-function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe) {
-  const entriesLength = self.entries.length;
+function getEndOfCentralDirectoryRecord(zipfile, actuallyJustTellMeHowLongItWouldBe) {
+  const entriesLength = zipfile.entries.length;
   let needZip64Format = false;
   let normalEntriesLength = entriesLength;
-  if (self.forceZip64Eocd || entriesLength >= 0xffff) {
+  if (zipfile.forceZip64Eocd || entriesLength >= 0xffff) {
     normalEntriesLength = 0xffff;
     needZip64Format = true;
   }
-  const sizeOfCentralDirectory = self.outputStreamCursor - self.offsetOfStartOfCentralDirectory;
+  const sizeOfCentralDirectory = zipfile.outputStreamCursor - zipfile.offsetOfStartOfCentralDirectory;
   let normalSizeOfCentralDirectory = sizeOfCentralDirectory;
-  if (self.forceZip64Eocd || sizeOfCentralDirectory >= 0xffffffff) {
+  if (zipfile.forceZip64Eocd || sizeOfCentralDirectory >= 0xffffffff) {
     normalSizeOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
   }
-  let normalOffsetOfStartOfCentralDirectory = self.offsetOfStartOfCentralDirectory;
-  if (self.forceZip64Eocd || self.offsetOfStartOfCentralDirectory >= 0xffffffff) {
+  let normalOffsetOfStartOfCentralDirectory = zipfile.offsetOfStartOfCentralDirectory;
+  if (zipfile.forceZip64Eocd || zipfile.offsetOfStartOfCentralDirectory >= 0xffffffff) {
     normalOffsetOfStartOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
   }
@@ -574,7 +575,7 @@ function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe
     }
   }
 
-  const comment = self.comment;
+  const comment = zipfile.comment;
   const commentLength = comment.length;
   const eocdrBuffer = Buffer.allocUnsafe(END_OF_CENTRAL_DIRECTORY_RECORD_SIZE + commentLength);
   // end of central dir signature                       4 bytes  (0x06054b50)
@@ -620,7 +621,7 @@ function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe
   // size of the central directory                                                  8 bytes
   writeUInt64LE(zip64EocdrBuffer, sizeOfCentralDirectory, 40);
   // offset of start of central directory with respect to the starting disk number  8 bytes
-  writeUInt64LE(zip64EocdrBuffer, self.offsetOfStartOfCentralDirectory, 48);
+  writeUInt64LE(zip64EocdrBuffer, zipfile.offsetOfStartOfCentralDirectory, 48);
   // zip64 extensible data sector                                                   (variable size)
   // nothing in the zip64 extensible data sector
 
@@ -631,7 +632,7 @@ function getEndOfCentralDirectoryRecord(self, actuallyJustTellMeHowLongItWouldBe
   // number of the disk with the start of the zip64 end of central directory  4 bytes
   zip64EocdlBuffer.writeUInt32LE(0, 4);
   // relative offset of the zip64 end of central directory record             8 bytes
-  writeUInt64LE(zip64EocdlBuffer, self.outputStreamCursor, 8);
+  writeUInt64LE(zip64EocdlBuffer, zipfile.outputStreamCursor, 8);
   // total number of disks                                                    4 bytes
   zip64EocdlBuffer.writeUInt32LE(1, 16);
 
