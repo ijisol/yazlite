@@ -349,6 +349,9 @@ class ZipFile extends EventEmitter {
   ended = false; // .end() sets this
   allDone = false; // set when we've written the last bytes
   forceZip64Eocd = false; // configurable in .end()
+  /** @type {?Function} */ finalSizeCallback = null;
+  comment = EMPTY_BUFFER;
+  offsetOfStartOfCentralDirectory = 0;
 
   /**
    * @param {string} realPath
@@ -486,9 +489,6 @@ class ZipFile extends EventEmitter {
       if (comment.includes(eocdrSignatureBuffer)) {
         throw new Error('comment contains end of central directory record signature');
       }
-    } else {
-      // no comment.
-      this.comment = EMPTY_BUFFER;
     }
   
     pumpEntries(this);
