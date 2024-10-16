@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
+import { EventEmitter } from 'node:events';
 import { createReadStream, stat } from 'node:fs';
 import { PassThrough, Transform } from 'node:stream';
 import { DeflateRaw, crc32, deflateRaw } from 'node:zlib';
-import { EventEmitter } from 'events';
 
 const ZIP64_END_OF_CENTRAL_DIRECTORY_RECORD_SIZE = 56;
 const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIZE = 20;
