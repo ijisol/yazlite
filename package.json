@@ -1,18 +1,22 @@
 {
   "name": "yazlite",
-  "version": "2.5.1",
-  "description": "yet another zip library for node",
+  "version": "3.0.0",
+  "description": "Generate ZIP files in Node.js; yazl fork with no dependencies.",
   "keywords": [
     "zip",
     "stream",
     "archive",
-    "file"
+    "file",
+    "yazl"
   ],
   "license": "MIT",
-  "author": "Josh Wolfe <thejoshwolfe@gmail.com>",
+  "author": "Lee Jisol",
   "type": "module",
   "exports": {
     ".": "./index.js",
     "./cp437": "./cp437.js"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

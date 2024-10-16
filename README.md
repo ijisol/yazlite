@@ -1,39 +1,42 @@
-# yazl
+# yazlite
 
-[![Build Status](https://travis-ci.com/thejoshwolfe/yazl.svg?branch=master)](https://travis-ci.com/thejoshwolfe/yazl)
-[![Coverage Status](https://coveralls.io/repos/github/thejoshwolfe/yazl/badge.svg?branch=master)](https://coveralls.io/github/thejoshwolfe/yazl?branch=master)
+Generate ZIP files in Node.js; yazl fork with no dependencies.
 
-yet another zip library for node. For unzipping, see
-[yauzl](https://github.com/thejoshwolfe/yauzl).
+## About
 
-Design principles:
+Josh Wolfe's [yazl](https://github.com/thejoshwolfe/yazl) is a great ZIP library. It's stable, so it's not a big problem that it hasn't been updated for a long time.
 
- * Don't block the JavaScript thread.
-   Use and provide async APIs.
- * Keep memory usage under control.
-   Don't attempt to buffer entire files in RAM at once.
- * Prefer to open input files one at a time than all at once.
-   This is slightly suboptimal for time performance,
-   but avoids OS-imposed limits on the number of simultaneously open file handles.
+But now Node.js 22 became LTS, and it has [a built-in CRC32 checksum method](https://nodejs.org/docs/latest-v22.x/api/zlib.html#zlibcrc32data-value). There's no reason to keep the [buffer-crc32](https://www.npmjs.com/package/buffer-crc32) dependency. However, the state of issues and pull requests in the yazl's repository looks like it will not be updated in the future.
+
+The yazlite is a fork of the yazl for removing the dependency and converting legacy code to modern syntax.
 
 ## Usage
 
-```js
-var yazl = require("yazl");
+``` javascript
+import { Buffer } from 'node:buffer';
+import { createWriteStream } from 'node:fs';
+import { ZipFile } from 'yazlite';
+import { encodeCp437 } from 'yazlite/cp437';
 
-var zipfile = new yazl.ZipFile();
-zipfile.addFile("file1.txt", "file1.txt");
-// (add only files, not directories)
-zipfile.addFile("path/to/file.txt", "path/in/zipfile.txt");
-// pipe() can be called any time after the constructor
-zipfile.outputStream.pipe(fs.createWriteStream("output.zip")).on("close", function() {
-  console.log("done");
-});
-// alternate apis for adding files:
-zipfile.addReadStream(process.stdin, "stdin.txt");
-zipfile.addBuffer(Buffer.from("hello"), "hello.txt");
-// call end() after all the files have been added
-zipfile.end();
+const zipfile = new ZipFile();
+
+// Can add only files, not directories.
+zipfile.addFile('file1.txt', 'file1.txt');
+zipfile.addFile('path/to/file.txt', 'path/in/zipfile.txt');
+
+// `pipe()` can be called any time after the constructor.
+const stream = createWriteStream('output.zip');
+zipfile.outputStream.pipe(stream).on('close', () => console.log('done'));
+
+// Alternate APIs for adding files:
+zipfile.addReadStream(process.stdin, 'stdin.txt');
+zipfile.addBuffer(Buffer.from('hello', 'utf8'), 'hello.txt');
+
+// Call `end()` after all the files have been added.
+// If a comment exists, it must be a Buffer.
+// The `encodeCp437` in `yazlite/cp437` is a utility for its encoding.
+// See `ZipFile.end()` section for details.
+zipfile.end({ comment: encodeCp437('This is a comment ☺') });
 ```
 
 ## API
@@ -61,13 +64,13 @@ After UTF-8 encoding, `metadataPath` must be at most `0xffff` bytes in length.
 
 `options` may be omitted or null and has the following structure and default values:
 
-```js
+``` javascript
 {
   mtime: stats.mtime,
   mode: stats.mode,
   compress: true,
   forceZip64Format: false,
-  fileComment: "", // or a UTF-8 Buffer
+  fileComment: null,
 }
 ```
 
@@ -101,13 +104,13 @@ Adds a file to the zip file whose content is read from `readStream`.
 See `addFile()` for info about the `metadataPath` parameter.
 `options` may be omitted or null and has the following structure and default values:
 
-```js
+``` javascript
 {
   mtime: new Date(),
   mode: 0o100664,
   compress: true,
   forceZip64Format: false,
-  fileComment: "", // or a UTF-8 Buffer
+  fileComment: null,
   size: 12345, // example value
 }
 ```
@@ -126,13 +129,13 @@ See below for info on the limitations on the size of `buffer`.
 See `addFile()` for info about the `metadataPath` parameter.
 `options` may be omitted or null and has the following structure and default values:
 
-```js
+``` javascript
 {
   mtime: new Date(),
   mode: 0o100664,
   compress: true,
   forceZip64Format: false,
-  fileComment: "", // or a UTF-8 Buffer
+  fileComment: null,
 }
 ```
 
@@ -176,7 +179,7 @@ If `metadataPath` does not end with a `"/"`, a `"/"` will be appended.
 
 `options` may be omitted or null and has the following structure and default values:
 
-```js
+``` javascript
 {
   mtime: new Date(),
   mode: 040775,
@@ -192,10 +195,10 @@ and causes the eventual close of `outputStream`.
 
 `options` may be omitted or null and has the following structure and default values:
 
-```js
+``` javascript
 {
   forceZip64Format: false,
-  comment: "", // or a CP437 Buffer
+  comment: null,
 }
 ```
 
@@ -204,8 +207,9 @@ and ZIP64 End of Central Directory Record regardless of whether or not they are 
 (this may be useful for testing.).
 Otherwise, yazl will include these structures if necessary.
 
-If `comment` is a `string`, it will be encoded with CP437.
 If `comment` is a `Buffer`, it should be a CP437 encoded string.
+The utility function `encodeCp437()` is provided optionally in `yazlite/cp437`.
+
 `comment` must be at most `0xffff` bytes in length and must not include the byte sequence `[0x50,0x4b,0x05,0x06]`.
 This becomes the ".ZIP file comment" field in the end of central directory record.
 Note that in practice, most zipfile readers interpret this field in UTF-8 instead of CP437.
@@ -214,7 +218,6 @@ If your string uses only codepoints in the range `0x20...0x7e`
 then UTF-8 and CP437 (and ASCII) encodings are all identical.
 This restriction is recommended for maxium compatibility.
 To use UTF-8 encoding at your own risk, pass a `Buffer` into this function; it will not be validated.
-
 
 If specified and non-null, `finalSizeCallback` is given the parameters `(finalSize)`
 sometime during or after the call to `end()`.
@@ -353,37 +356,3 @@ Instead, each of the fields is limited to 65,535 bytes due to the length of each
 
 ## Change History
 
- * 2.5.1
-   * Fix support for old versions of Node and add official support for Node versions 0.10, 4, 6, 8, 10. [pull #49](https://github.com/thejoshwolfe/yazl/pull/49)
- * 2.5.0
-   * Add support for `comment` and `fileComment`. [pull #44](https://github.com/thejoshwolfe/yazl/pull/44)
-   * Avoid `new Buffer()`. [pull #43](https://github.com/thejoshwolfe/yazl/pull/43)
- * 2.4.3
-   * Clarify readme. [pull #33](https://github.com/thejoshwolfe/yazl/pull/33)
- * 2.4.2
-   * Remove octal literals to make yazl compatible with strict mode. [pull #28](https://github.com/thejoshwolfe/yazl/pull/28)
- * 2.4.1
-   * Fix Mac Archive Utility compatibility issue. [issue #24](https://github.com/thejoshwolfe/yazl/issues/24)
- * 2.4.0
-   * Add ZIP64 support. [issue #6](https://github.com/thejoshwolfe/yazl/issues/6)
- * 2.3.1
-   * Remove `.npmignore` from npm package. [pull #22](https://github.com/thejoshwolfe/yazl/pull/22)
- * 2.3.0
-   * `metadataPath` can have `\` characters now; they will be replaced with `/`. [issue #18](https://github.com/thejoshwolfe/yazl/issues/18)
- * 2.2.2
-   * Fix 7-Zip compatibility issue. [pull request #17](https://github.com/thejoshwolfe/yazl/pull/17)
- * 2.2.1
-   * Fix Mac Archive Utility compatibility issue. [issue #14](https://github.com/thejoshwolfe/yazl/issues/14)
- * 2.2.0
-   * Avoid using general purpose bit 3 for `addBuffer()` calls. [issue #13](https://github.com/thejoshwolfe/yazl/issues/13)
- * 2.1.3
-   * Fix bug when only addBuffer() and end() are called. [issue #12](https://github.com/thejoshwolfe/yazl/issues/12)
- * 2.1.2
-   * Fixed typo in parameter validation. [pull request #10](https://github.com/thejoshwolfe/yazl/pull/10)
- * 2.1.1
-   * Fixed stack overflow when using addBuffer() in certain ways. [issue #9](https://github.com/thejoshwolfe/yazl/issues/9)
- * 2.1.0
-   * Added `addEmptyDirectory()`.
-   * `options` is now optional for `addReadStream()` and `addBuffer()`.
- * 2.0.0
-   * Initial release.
