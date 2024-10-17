@@ -181,9 +181,9 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
 
 (function () {
   const testCases = [
-    ['Hello World!', 'Hello World!'],
+    [Buffer.from('Hello World!'), 'Hello World!'],
     [Buffer.from('Hello!'), 'Hello!'],
-    [weirdChars, weirdChars],
+    [Buffer.from(weirdChars), weirdChars],
   ];
   testCases.forEach(function (testCase, i) {
     const zipfile = new ZipFile();
@@ -201,8 +201,9 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
           const entryNames = ['hello.txt'];
           zipfile.on('entry', function (entry) {
             const expectedName = entryNames.shift();
-            if (entry.fileComment !== testCase[1]) {
-              throw new Error(`fileComment is wrong. ${JSON.stringify(entry.fileComment)} !== ${JSON.stringify(testCase[1])}`);
+            const fileComment = entry.fileComment.toString();
+            if (fileComment !== testCase[1]) {
+              throw new Error(`fileComment is wrong. ${JSON.stringify(fileComment)} !== ${JSON.stringify(testCase[1])}`);
             }
           });
           zipfile.on('end', function () {

@@ -55,7 +55,7 @@ class Crc32Watcher extends Transform {
  * @property {?number} [mode]
  * @property {?boolean} [compress]
  * @property {?boolean} [forceZip64Format]
- * @property {?(Buffer|string)} [fileComment]
+ * @property {?Buffer} [fileComment]
  * @property {?number} [size]
  */
 
@@ -101,16 +101,17 @@ class Entry {
     }
     this.forceZip64Format = !!options.forceZip64Format;
     const fileComment = options.fileComment;
-    if (fileComment) {
-      const fileCommentBuffer = (typeof fileComment === 'string') ? Buffer.from(fileComment, 'utf8') : fileComment;
+    if (fileComment == null) {
+      // no comment.
+      this.fileComment = EMPTY_BUFFER;
+    } else if (fileComment instanceof Buffer) {
       // It should be a Buffer
-      this.fileComment = fileCommentBuffer;
-      if (fileCommentBuffer.length > 0xffff) {
+      this.fileComment = fileComment;
+      if (fileComment.length > 0xffff) {
         throw new Error('fileComment is too large');
       }
     } else {
-      // no comment.
-      this.fileComment = EMPTY_BUFFER;
+      throw new Error('fileComment must be a Buffer if it exists');
     }
   }
 
@@ -463,7 +464,7 @@ class ZipFile extends EventEmitter {
   }
 
   /**
-   * @param {?Function|Options} [options]
+   * @param {?Function|Object} [options]
    * @param {?Function} [finalSizeCallback]
    */
   end(options, finalSizeCallback) {
@@ -479,9 +480,11 @@ class ZipFile extends EventEmitter {
     this.forceZip64Eocd = !!options.forceZip64Format;
 
     const comment = options.comment;
-    if (comment) {
+    if (comment != null) {
       // It should be a Buffer
-      this.comment = comment;
+      if (!(comment instanceof Buffer)) {
+        throw new Error('comment must be a Buffer if it exists');
+      }
       if (comment.length > 0xffff) {
         throw new Error('comment is too large');
       }
@@ -489,6 +492,7 @@ class ZipFile extends EventEmitter {
       if (comment.includes(eocdrSignatureBuffer)) {
         throw new Error('comment contains end of central directory record signature');
       }
+      this.comment = comment;
     }
   
     pumpEntries(this);

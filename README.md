@@ -88,8 +88,7 @@ If `forceZip64Format` is `true`, yazl will use ZIP64 format in this entry's Data
 and Central Directory Record regardless of if it's required or not (this may be useful for testing.).
 Otherwise, yazl will use ZIP64 format where necessary.
 
-If `fileComment` is a `string`, it will be encoded with UTF-8.
-If `fileComment` is a `Buffer`, it should be a UTF-8 encoded string.
+If `fileComment` exists, it shoud be a UTF-8 encoded `Buffer`.
 In UTF-8, `fileComment` must be at most `0xffff` bytes in length.
 This becomes the "file comment" field in this entry's central directory file header.
 
