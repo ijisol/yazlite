@@ -31,6 +31,9 @@ const CDR_FIXED_SIZE = 46;
 /** ZIP64 extended information extra field size */
 const ZIP64_EIEF_SIZE = 28;
 
+/** End of central directory record signature */
+const EOCDR_SIGNATURE = Buffer.of(0x50, 0x4b, 0x05, 0x06);
+
 class ByteCounter extends Transform {
   byteCount = 0;
 
@@ -169,48 +172,56 @@ class Entry {
    * @returns {Buffer}
    */
   getLocalFileHeader() {
+    const utf8FileName = this.utf8FileName;
+    const utf8FileNameLength = utf8FileName.length;
+
+    const buffer = Buffer.allocUnsafe(
+      LOCAL_FILE_HEADER_FIXED_SIZE +
+      // file name (variable size)
+      utf8FileNameLength
+      // extra field (variable size)
+      // no extra fields
+    );
+
     let crc32 = 0;
     let compressedSize = 0;
     let uncompressedSize = 0;
+    let generalPurposeBitFlag = FILE_NAME_IS_UTF8;
     if (this.crcAndFileSizeKnown) {
       crc32 = this.crc32;
       compressedSize = this.compressedSize;
       uncompressedSize = this.uncompressedSize;
+    } else {
+      generalPurposeBitFlag |= UNKNOWN_CRC32_AND_FILE_SIZES;
     }
 
-    const fixedSizeStuff = Buffer.allocUnsafe(LOCAL_FILE_HEADER_FIXED_SIZE);
-    let generalPurposeBitFlag = FILE_NAME_IS_UTF8;
-    if (!this.crcAndFileSizeKnown) generalPurposeBitFlag |= UNKNOWN_CRC32_AND_FILE_SIZES;
-
     // local file header signature     4 bytes  (0x04034b50)
-    fixedSizeStuff.writeUInt32LE(0x04034b50, 0);
+    buffer.writeUInt32LE(0x04034b50, 0);
     // version needed to extract       2 bytes
-    fixedSizeStuff.writeUInt16LE(VERSION_NEEDED_TO_EXTRACT_UTF8, 4);
+    buffer.writeUInt16LE(VERSION_NEEDED_TO_EXTRACT_UTF8, 4);
     // general purpose bit flag        2 bytes
-    fixedSizeStuff.writeUInt16LE(generalPurposeBitFlag, 6);
+    buffer.writeUInt16LE(generalPurposeBitFlag, 6);
     // compression method              2 bytes
-    fixedSizeStuff.writeUInt16LE(this.getCompressionMethod(), 8);
+    buffer.writeUInt16LE(this.getCompressionMethod(), 8);
     // last mod file time              2 bytes
-    fixedSizeStuff.writeUInt16LE(this.lastModFileTime, 10);
+    buffer.writeUInt16LE(this.lastModFileTime, 10);
     // last mod file date              2 bytes
-    fixedSizeStuff.writeUInt16LE(this.lastModFileDate, 12);
+    buffer.writeUInt16LE(this.lastModFileDate, 12);
     // crc-32                          4 bytes
-    fixedSizeStuff.writeUInt32LE(crc32, 14);
+    buffer.writeUInt32LE(crc32, 14);
     // compressed size                 4 bytes
-    fixedSizeStuff.writeUInt32LE(compressedSize, 18);
+    buffer.writeUInt32LE(compressedSize, 18);
     // uncompressed size               4 bytes
-    fixedSizeStuff.writeUInt32LE(uncompressedSize, 22);
+    buffer.writeUInt32LE(uncompressedSize, 22);
     // file name length                2 bytes
-    fixedSizeStuff.writeUInt16LE(this.utf8FileName.length, 26);
+    buffer.writeUInt16LE(utf8FileNameLength, 26);
     // extra field length              2 bytes
-    fixedSizeStuff.writeUInt16LE(0, 28);
-    return Buffer.concat([
-      fixedSizeStuff,
-      // file name (variable size)
-      this.utf8FileName,
-      // extra field (variable size)
-      // no extra fields
-    ]);
+    buffer.writeUInt16LE(0, 28);
+
+    // file name (variable size)
+    buffer.set(utf8FileName, LOCAL_FILE_HEADER_FIXED_SIZE);
+
+    return buffer;
   }
 
   /**
@@ -340,8 +351,6 @@ class Entry {
     return this.compress ? DEFLATE_COMPRESSION : NO_COMPRESSION;
   }
 }
-
-const eocdrSignatureBuffer = Buffer.of(0x50, 0x4b, 0x05, 0x06);
 
 class ZipFile extends EventEmitter {
   outputStream = new PassThrough();
@@ -489,7 +498,7 @@ class ZipFile extends EventEmitter {
         throw new Error('comment is too large');
       }
       // gotta check for this, because the zipfile format is actually ambiguous.
-      if (comment.includes(eocdrSignatureBuffer)) {
+      if (comment.includes(EOCDR_SIGNATURE)) {
         throw new Error('comment contains end of central directory record signature');
       }
       this.comment = comment;
@@ -648,30 +657,31 @@ function calculateFinalSize(zipfile) {
  * @returns {Buffer}
  */
 function getEndOfCentralDirectoryRecord(zipfile) {
-  const entriesLength = zipfile.entries.length;
-  let needZip64Format = false;
-  let normalEntriesLength = entriesLength;
-  if (zipfile.forceZip64Eocd || entriesLength >= 0xffff) {
-    normalEntriesLength = 0xffff;
-    needZip64Format = true;
-  }
+  const { entries: { length: entriesLength },
+          comment,
+          forceZip64Eocd,
+          offsetOfStartOfCentralDirectory,
+          outputStreamCursor } = zipfile;
 
-  const sizeOfCentralDirectory = zipfile.outputStreamCursor - zipfile.offsetOfStartOfCentralDirectory;
+  let needZip64Format = (forceZip64Eocd || entriesLength >= 0xffff);
+  const normalEntriesLength = needZip64Format ? 0xffff : entriesLength;
+
+  const sizeOfCentralDirectory = outputStreamCursor - offsetOfStartOfCentralDirectory;
   let normalSizeOfCentralDirectory = sizeOfCentralDirectory;
-  if (zipfile.forceZip64Eocd || sizeOfCentralDirectory >= 0xffffffff) {
+  if (forceZip64Eocd || sizeOfCentralDirectory >= 0xffffffff) {
     normalSizeOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
   }
 
-  let normalOffsetOfStartOfCentralDirectory = zipfile.offsetOfStartOfCentralDirectory;
-  if (zipfile.forceZip64Eocd || zipfile.offsetOfStartOfCentralDirectory >= 0xffffffff) {
+  let normalOffsetOfStartOfCentralDirectory = offsetOfStartOfCentralDirectory;
+  if (forceZip64Eocd || offsetOfStartOfCentralDirectory >= 0xffffffff) {
     normalOffsetOfStartOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
   }
 
-  const comment = zipfile.comment;
   const commentLength = comment.length;
   const eocdrBuffer = Buffer.allocUnsafe(EOCDR_SIZE + commentLength);
+
   // end of central dir signature                       4 bytes  (0x06054b50)
   eocdrBuffer.writeUInt32LE(0x06054b50, 0);
   // number of this disk                                2 bytes
@@ -689,52 +699,50 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   // .ZIP file comment length                           2 bytes
   eocdrBuffer.writeUInt16LE(commentLength, 20);
   // .ZIP file comment                                  (variable size)
-  comment.copy(eocdrBuffer, 22);
+  eocdrBuffer.set(comment, 22);
 
   if (!needZip64Format) return eocdrBuffer;
 
   // ZIP64 format
+  const zip64Buffer = Buffer.allocUnsafe(ZIP64_EOCDR_SIZE + ZIP64_EOCDL_SIZE + EOCDR_SIZE + commentLength);
+
   // ZIP64 End of Central Directory Record
-  const zip64EocdrBuffer = Buffer.allocUnsafe(ZIP64_EOCDR_SIZE);
   // zip64 end of central dir signature                                             4 bytes  (0x06064b50)
-  zip64EocdrBuffer.writeUInt32LE(0x06064b50, 0);
+  zip64Buffer.writeUInt32LE(0x06064b50, 0);
   // size of zip64 end of central directory record                                  8 bytes
-  zip64EocdrBuffer.writeBigUInt64LE(BigInt(ZIP64_EOCDR_SIZE - 12), 4);
+  zip64Buffer.writeBigUInt64LE(BigInt(ZIP64_EOCDR_SIZE - 12), 4);
   // version made by                                                                2 bytes
-  zip64EocdrBuffer.writeUInt16LE(VERSION_MADE_BY, 12);
+  zip64Buffer.writeUInt16LE(VERSION_MADE_BY, 12);
   // version needed to extract                                                      2 bytes
-  zip64EocdrBuffer.writeUInt16LE(VERSION_NEEDED_TO_EXTRACT_ZIP64, 14);
+  zip64Buffer.writeUInt16LE(VERSION_NEEDED_TO_EXTRACT_ZIP64, 14);
   // number of this disk                                                            4 bytes
-  zip64EocdrBuffer.writeUInt32LE(0, 16);
+  zip64Buffer.writeUInt32LE(0, 16);
   // number of the disk with the start of the central directory                     4 bytes
-  zip64EocdrBuffer.writeUInt32LE(0, 20);
+  zip64Buffer.writeUInt32LE(0, 20);
   // total number of entries in the central directory on this disk                  8 bytes
-  zip64EocdrBuffer.writeBigUInt64LE(BigInt(entriesLength), 24);
+  zip64Buffer.writeBigUInt64LE(BigInt(entriesLength), 24);
   // total number of entries in the central directory                               8 bytes
-  zip64EocdrBuffer.writeBigUInt64LE(BigInt(entriesLength), 32);
+  zip64Buffer.writeBigUInt64LE(BigInt(entriesLength), 32);
   // size of the central directory                                                  8 bytes
-  zip64EocdrBuffer.writeBigUInt64LE(BigInt(sizeOfCentralDirectory), 40);
+  zip64Buffer.writeBigUInt64LE(BigInt(sizeOfCentralDirectory), 40);
   // offset of start of central directory with respect to the starting disk number  8 bytes
-  zip64EocdrBuffer.writeBigUInt64LE(BigInt(zipfile.offsetOfStartOfCentralDirectory), 48);
+  zip64Buffer.writeBigUInt64LE(BigInt(offsetOfStartOfCentralDirectory), 48);
   // zip64 extensible data sector                                                   (variable size)
   // nothing in the zip64 extensible data sector
 
   // ZIP64 End of Central Directory Locator
-  const zip64EocdlBuffer = Buffer.allocUnsafe(ZIP64_EOCDL_SIZE);
   // zip64 end of central dir locator signature                               4 bytes  (0x07064b50)
-  zip64EocdlBuffer.writeUInt32LE(0x07064b50, 0);
+  zip64Buffer.writeUInt32LE(0x07064b50, ZIP64_EOCDR_SIZE + 0);
   // number of the disk with the start of the zip64 end of central directory  4 bytes
-  zip64EocdlBuffer.writeUInt32LE(0, 4);
+  zip64Buffer.writeUInt32LE(0, ZIP64_EOCDR_SIZE + 4);
   // relative offset of the zip64 end of central directory record             8 bytes
-  zip64EocdlBuffer.writeBigUInt64LE(BigInt(zipfile.outputStreamCursor), 8);
+  zip64Buffer.writeBigUInt64LE(BigInt(outputStreamCursor), ZIP64_EOCDR_SIZE + 8);
   // total number of disks                                                    4 bytes
-  zip64EocdlBuffer.writeUInt32LE(1, 16);
+  zip64Buffer.writeUInt32LE(1, ZIP64_EOCDR_SIZE + 16);
 
-  return Buffer.concat([
-    zip64EocdrBuffer,
-    zip64EocdlBuffer,
-    eocdrBuffer,
-  ]);
+  zip64Buffer.set(eocdrBuffer, ZIP64_EOCDR_SIZE + ZIP64_EOCDL_SIZE);
+
+  return zip64Buffer;
 }
 
 /**
