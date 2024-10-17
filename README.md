@@ -1,6 +1,6 @@
 # yazlite
 
-Generate ZIP files in Node.js; yazl fork with no dependencies.
+Generate ZIP files in Node.js; zero-dependency yazl fork.
 
 ## About
 

@@ -1,12 +1,12 @@
 {
   "name": "yazlite",
   "version": "3.0.0",
-  "description": "Generate ZIP files in Node.js; yazl fork with no dependencies.",
+  "description": "Generate ZIP files in Node.js; zero-dependency yazl fork.",
   "keywords": [
     "zip",
-    "stream",
     "archive",
-    "file",
+    "compress",
+    "stream",
     "yazl"
   ],
   "license": "MIT",
