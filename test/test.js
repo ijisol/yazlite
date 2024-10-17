@@ -87,7 +87,7 @@ const filename = fileURLToPath(import.meta.url);
   zipfile.addBuffer(Buffer.from('buffer'), 'b.txt');
   zipfile.addReadStream(new BufferListStream().append('stream'), 'c.txt');
   zipfile.addEmptyDirectory('d/');
-  zipfile.addEmptyDirectory('e');
+  zipfile.addEmptyDirectory('e', { mode: 0o000644 });
   zipfile.end(function (finalSize) {
     if (finalSize !== -1) throw new Error('finalSize should be unknown');
     zipfile.outputStream.pipe(new BufferListStream(function (err, data) {
@@ -96,9 +96,21 @@ const filename = fileURLToPath(import.meta.url);
         if (err) throw err;
         const entryNames = ['a.txt', 'b.txt', 'c.txt', 'd/', 'e/'];
         zipfile.on('entry', function (entry) {
+          const { fileName } = entry;
           const expectedName = entryNames.shift();
-          if (entry.fileName !== expectedName) {
-            throw new Error(`unexpected entry fileName: ${entry.fileName}, expected: ${expectedName}`);
+          if (fileName !== expectedName) {
+            throw new Error(`unexpected entry fileName: ${fileName}, expected: ${expectedName}`);
+          }
+          const mode = entry.externalFileAttributes >>> 16;
+          if (fileName.endsWith('/')) {
+            if ((mode & 0o040000) === 0) {
+              throw new Error(`directory expected to have S_IFDIR, found ${mode.toString(8)}`);
+            }
+            if ((mode & 0o000111) === 0) {
+              throw new Error(`directory expected to have executable flags, found ${mode.toString(8)}`);
+            }
+          } else if ((mode & 0o100000) === 0) {
+            throw new Error(`file expected to have S_IFREG, found ${mode.toString(8)}`);
           }
         });
         zipfile.on('end', function () {
