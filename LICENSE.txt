@@ -1,7 +1,7 @@
 MIT License
 
 Copyright (c) 2014 Josh Wolfe
-Copyright (c) 2024 Lee Jisol
+Copyright (c) 2024 Lee Jisol and Jimb Esser
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
