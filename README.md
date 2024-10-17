@@ -4,9 +4,7 @@ Generate ZIP files in Node.js; zero-dependency yazl fork.
 
 ## About
 
-Josh Wolfe's [yazl](https://github.com/thejoshwolfe/yazl) is a great ZIP library. It's stable, so it's not a big problem that it hasn't been updated for a long time.
-
-But now Node.js 20 became LTS, and it has [a built-in CRC32 checksum method](https://nodejs.org/docs/latest-v20.x/api/zlib.html#zlibcrc32data-value). There's no reason to keep the [buffer-crc32](https://www.npmjs.com/package/buffer-crc32) dependency. However, the state of issues and pull requests in the yazl's repository looks like it will not be updated in the future.
+Josh Wolfe's [yazl](https://github.com/thejoshwolfe/yazl) is a great ZIP library. However, the state of issues and pull requests in its repository looks like it will not be updated anymore.
 
 The yazlite is a fork of the yazl for removing the dependency and converting legacy code to modern syntax.
 
@@ -16,7 +14,7 @@ The yazlite is a fork of the yazl for removing the dependency and converting leg
 import { Buffer } from 'node:buffer';
 import { createWriteStream } from 'node:fs';
 import { ZipFile } from 'yazlite';
-import { encodeCP437 } from 'yazlite/cp437';
+import { encodeCP437 } from 'yazlite/cp437'; // Optional
 
 const zipfile = new ZipFile();
 
@@ -34,8 +32,7 @@ zipfile.addBuffer(Buffer.from('hello', 'utf8'), 'hello.txt');
 
 // Call `end()` after all the files have been added.
 // If a comment exists, it must be a Buffer.
-// The `encodeCP437` in `yazlite/cp437` is a utility for its encoding.
-// See `ZipFile.end()` section for details.
+// The `encodeCP437()` is a utility for its encoding.
 zipfile.end({ comment: encodeCP437('This is a comment ☺') });
 ```
 
@@ -88,7 +85,7 @@ If `forceZip64Format` is `true`, yazl will use ZIP64 format in this entry's Data
 and Central Directory Record regardless of if it's required or not (this may be useful for testing.).
 Otherwise, yazl will use ZIP64 format where necessary.
 
-If `fileComment` exists, it shoud be a UTF-8 encoded `Buffer`.
+If `fileComment` exists (is not nullish), it shoud be a UTF-8 encoded `Buffer`.
 In UTF-8, `fileComment` must be at most `0xffff` bytes in length.
 This becomes the "file comment" field in this entry's central directory file header.
 
@@ -206,8 +203,9 @@ and ZIP64 End of Central Directory Record regardless of whether or not they are 
 (this may be useful for testing.).
 Otherwise, yazl will include these structures if necessary.
 
-If `comment` is a `Buffer`, it should be a CP437 encoded string.
+If `comment` exists (is not nullish), it should be a CP437 encoded `Buffer`.
 The utility function `encodeCP437()` is provided optionally in `yazlite/cp437`.
+To use UTF-8 encoding at your own risk; it will not be validated.
 
 `comment` must be at most `0xffff` bytes in length and must not include the byte sequence `[0x50,0x4b,0x05,0x06]`.
 This becomes the ".ZIP file comment" field in the end of central directory record.
@@ -216,7 +214,6 @@ If your string uses only codepoints in the range `0x20...0x7e`
 (printable ASCII, no whitespace except for sinlge space `' '`),
 then UTF-8 and CP437 (and ASCII) encodings are all identical.
 This restriction is recommended for maxium compatibility.
-To use UTF-8 encoding at your own risk, pass a `Buffer` into this function; it will not be validated.
 
 If specified and non-null, `finalSizeCallback` is given the parameters `(finalSize)`
 sometime during or after the call to `end()`.
@@ -350,3 +347,9 @@ Instead, each of the fields is limited to 65,535 bytes due to the length of each
 
 ## Change History
 
+- 3.0.0
+  - First release; to avoid version confusion with the original yazl, started with 3.0.0.
+  - Comments in each file in the archive and the ZIP archive itself are no longer auto-encoded. The comment string must be encoded into a `Buffer` first.
+  - A utility function `encodeCP437()` for encoding a comment in a ZIP archive is provided in a optinonal module `yazlite/cp437`. Import it only when needed.
+  - No more the [buffer-crc32](https://www.npmjs.com/package/buffer-crc32) dependency. It was replaced with [the Node.js built-in module](https://nodejs.org/docs/latest-v20.x/api/zlib.html#zlibcrc32data-value).
+  - The exported function `dosToDosDateTime()` is removed. It seems useless.
