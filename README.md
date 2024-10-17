@@ -347,6 +347,8 @@ Instead, each of the fields is limited to 65,535 bytes due to the length of each
 
 ## Change History
 
+- 3.0.1
+  - Fix ZIP files created on Windows being unusable on Linux/MacOS (missing executable bits on directories)
 - 3.0.0
   - First release; to avoid version confusion with the original yazl, started with 3.0.0.
   - Comments in each file in the archive and the ZIP archive itself are no longer auto-encoded. The comment string must be encoded into a `Buffer` first.
