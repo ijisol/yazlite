@@ -83,7 +83,7 @@ class Entry {
     this.isDirectory = isDirectory;
     this.state = Entry.WAITING_FOR_METADATA;
     this.setLastModDate(options.mtime ?? new Date());
-    this.setFileAttributesMode(options.mode ?? (isDirectory ? 0o40775 : 0o100664));
+    this.setFileAttributesMode(options.mode ?? 0o000664, isDirectory);
     if (isDirectory) {
       this.crcAndFileSizeKnown = true;
       this.crc32 = 0;
@@ -139,9 +139,18 @@ class Entry {
   /**
    * @param {number} mode
    */
-  setFileAttributesMode(mode) {
+  setFileAttributesMode(mode, isDirectory) {
     if ((mode & 0xffff) !== mode) {
       throw new Error(`invalid mode. expected: 0 <= ${mode} <= 65535`);
+    }
+    if (isDirectory) {
+      // https://github.com/thejoshwolfe/yazl/pull/59
+      // Set executable bit on directories if any other bits are set for that user/group/all
+      // Fixes creating unusable zip files on platforms that do not use an executable bit
+      mode |= ((mode >> 1) | (mode >> 2)) & 0o000111;
+      mode |= 0o040000; // S_IFDIR
+    } else {
+      mode |= 0o100000; // S_IFREG
     }
     // http://unix.stackexchange.com/questions/14705/the-zip-formats-external-file-attribute/14727#14727
     this.externalFileAttributes = (mode << 16) >>> 0;
@@ -381,7 +390,7 @@ class ZipFile extends EventEmitter {
       }
       entry.uncompressedSize = stats.size;
       if (options.mtime == null) entry.setLastModDate(stats.mtime);
-      if (options.mode == null) entry.setFileAttributesMode(stats.mode);
+      if (options.mode == null) entry.setFileAttributesMode(stats.mode, false);
       entry.setFileDataPumpFunction(() => {
         const readStream = createReadStream(realPath);
         entry.state = Entry.FILE_DATA_IN_PROGRESS;
