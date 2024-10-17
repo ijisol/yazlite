@@ -1,7 +1,7 @@
 import { createReadStream, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { fromBuffer } from 'yauzl';
-import { encodeCp437 } from '../cp437.js';
+import { encodeCP437 } from '../cp437.js';
 import { ZipFile } from '../index.js';
 import { BufferListStream } from './lib/bl.js';
 
@@ -139,9 +139,9 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
 
 (function () {
   const testCases = [
-    [encodeCp437('Hello World'), 'Hello World'],
+    [encodeCP437('Hello World'), 'Hello World'],
     [Buffer.from('Hello'), 'Hello'],
-    [encodeCp437(weirdChars), weirdChars],
+    [encodeCP437(weirdChars), weirdChars],
   ];
   testCases.forEach(function (testCase, i) {
     const zipfile = new ZipFile();

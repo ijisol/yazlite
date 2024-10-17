@@ -16,7 +16,7 @@ The yazlite is a fork of the yazl for removing the dependency and converting leg
 import { Buffer } from 'node:buffer';
 import { createWriteStream } from 'node:fs';
 import { ZipFile } from 'yazlite';
-import { encodeCp437 } from 'yazlite/cp437';
+import { encodeCP437 } from 'yazlite/cp437';
 
 const zipfile = new ZipFile();
 
@@ -34,9 +34,9 @@ zipfile.addBuffer(Buffer.from('hello', 'utf8'), 'hello.txt');
 
 // Call `end()` after all the files have been added.
 // If a comment exists, it must be a Buffer.
-// The `encodeCp437` in `yazlite/cp437` is a utility for its encoding.
+// The `encodeCP437` in `yazlite/cp437` is a utility for its encoding.
 // See `ZipFile.end()` section for details.
-zipfile.end({ comment: encodeCp437('This is a comment ☺') });
+zipfile.end({ comment: encodeCP437('This is a comment ☺') });
 ```
 
 ## API
@@ -208,7 +208,7 @@ and ZIP64 End of Central Directory Record regardless of whether or not they are 
 Otherwise, yazl will include these structures if necessary.
 
 If `comment` is a `Buffer`, it should be a CP437 encoded string.
-The utility function `encodeCp437()` is provided optionally in `yazlite/cp437`.
+The utility function `encodeCP437()` is provided optionally in `yazlite/cp437`.
 
 `comment` must be at most `0xffff` bytes in length and must not include the byte sequence `[0x50,0x4b,0x05,0x06]`.
 This becomes the ".ZIP file comment" field in the end of central directory record.

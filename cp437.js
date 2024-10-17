@@ -6,7 +6,7 @@ for (let i = 0; i <= 0xff; ++i) {
   REVERSE_CP437[CP437.charCodeAt(i)] = i;
 }
 
-export function encodeCp437(string) {
+export function encodeCP437(string) {
   const length = string.length;
   const result = Buffer.allocUnsafe(length);
   for (let i = 0; i < length; ++i) {
