@@ -13,7 +13,7 @@ const ZIP64_EOCDL_SIZE = 20;
 /** End of central directory record size */
 const EOCDR_SIZE = 22;
 
-const EMPTY_BUFFER = Buffer.allocUnsafe(0);
+const EMPTY_BUFFER = new Uint8Array(0);
 
 const LOCAL_FILE_HEADER_FIXED_SIZE = 30;
 const VERSION_NEEDED_TO_EXTRACT_UTF8 = 20;
@@ -32,7 +32,7 @@ const CDR_FIXED_SIZE = 46;
 const ZIP64_EIEF_SIZE = 28;
 
 /** End of central directory record signature */
-const EOCDR_SIGNATURE = Buffer.of(0x50, 0x4b, 0x05, 0x06);
+const EOCDR_SIGNATURE = Uint8Array.of(0x50, 0x4b, 0x05, 0x06);
 
 class ByteCounter extends Transform {
   byteCount = 0;
@@ -58,7 +58,7 @@ class Crc32Watcher extends Transform {
  * @property {?number} [mode]
  * @property {?boolean} [compress]
  * @property {?boolean} [forceZip64Format]
- * @property {?Buffer} [fileComment]
+ * @property {?Buffer|Uint8Array} [fileComment]
  * @property {?number} [size]
  */
 
@@ -107,14 +107,14 @@ class Entry {
     if (fileComment == null) {
       // no comment.
       this.fileComment = EMPTY_BUFFER;
-    } else if (fileComment instanceof Buffer) {
-      // It should be a Buffer
+    } else if (fileComment instanceof Uint8Array) {
+      // It should be a Buffer/Uint8Array
       this.fileComment = fileComment;
       if (fileComment.length > 0xffff) {
         throw new Error('fileComment is too large');
       }
     } else {
-      throw new Error('fileComment must be a Buffer if it exists');
+      throw new Error('fileComment must be a Buffer/Uint8Array if it exists');
     }
   }
 
@@ -477,9 +477,9 @@ class ZipFile extends EventEmitter {
 
     const comment = options.comment;
     if (comment != null) {
-      // It should be a Buffer
-      if (!(comment instanceof Buffer)) {
-        throw new Error('comment must be a Buffer if it exists');
+      // It should be a Buffer/Uint8Array
+      if (!(comment instanceof Uint8Array)) {
+        throw new Error('comment must be a Buffer/Uint8Array if it exists');
       }
       if (comment.length > 0xffff) {
         throw new Error('comment is too large');
