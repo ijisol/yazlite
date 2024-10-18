@@ -1,6 +1,6 @@
 {
   "name": "yazlite",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "description": "Generate ZIP files in Node.js; zero-dependency yazl fork.",
   "keywords": [
     "zip",
