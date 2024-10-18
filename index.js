@@ -54,7 +54,7 @@ class Crc32Watcher extends Transform {
 
 /**
  * @typedef {Object} Options
- * @property {?Date} [mtime]
+ * @property {?Date|number} [mtime]
  * @property {?number} [mode]
  * @property {?boolean} [compress]
  * @property {?boolean} [forceZip64Format]
@@ -76,11 +76,11 @@ class Entry {
    */
   constructor(metadataPath, isDirectory, options) {
     const { mtime, fileComment } = options;
-    const utf8FileName = Buffer.from(metadataPath);
-    if (utf8FileName.length > 0xffff) {
-      throw new Error(`utf8 file name too long. ${utf8FileName.length} > 65535`);
+    const filename = Buffer.from(metadataPath, 'utf8');
+    if (filename.length > 0xffff) {
+      throw new Error(`utf8 file name too long. ${filename.length} > 65535`);
     }
-    this.utf8FileName = utf8FileName;
+    this.filename = filename;
     this.isDirectory = isDirectory;
     this.state = Entry.WAITING_FOR_METADATA;
     this.lastmod = (typeof mtime === 'number') ? mtime : dateToDosDateTime(mtime ?? new Date());
@@ -163,13 +163,13 @@ class Entry {
    * @returns {Buffer}
    */
   getLocalFileHeader() {
-    const utf8FileName = this.utf8FileName;
-    const utf8FileNameLength = utf8FileName.length;
+    const { filename } = this;
+    const filenameLength = filename.length;
 
     const buffer = Buffer.allocUnsafe(
       LOCAL_FILE_HEADER_FIXED_SIZE +
       // file name (variable size)
-      utf8FileNameLength
+      filenameLength
       // extra field (variable size)
       // no extra fields
     );
@@ -203,12 +203,12 @@ class Entry {
     // uncompressed size               4 bytes
     buffer.writeUInt32LE(uncompressedSize, 22);
     // file name length                2 bytes
-    buffer.writeUInt16LE(utf8FileNameLength, 26);
+    buffer.writeUInt16LE(filenameLength, 26);
     // extra field length              2 bytes
     buffer.writeUInt16LE(0, 28);
 
     // file name (variable size)
-    buffer.set(utf8FileName, LOCAL_FILE_HEADER_FIXED_SIZE);
+    buffer.set(filename, LOCAL_FILE_HEADER_FIXED_SIZE);
 
     return buffer;
   }
@@ -304,7 +304,7 @@ class Entry {
     // uncompressed size               4 bytes
     fixedSizeStuff.writeUInt32LE(normalUncompressedSize, 24);
     // file name length                2 bytes
-    fixedSizeStuff.writeUInt16LE(this.utf8FileName.length, 28);
+    fixedSizeStuff.writeUInt16LE(this.filename.length, 28);
     // extra field length              2 bytes
     fixedSizeStuff.writeUInt16LE(zeiefBuffer.length, 30);
     // file comment length             2 bytes
@@ -321,7 +321,7 @@ class Entry {
     return Buffer.concat([
       fixedSizeStuff,
       // file name (variable size)
-      this.utf8FileName,
+      this.filename,
       // extra field (variable size)
       zeiefBuffer,
       // file comment (variable size)
@@ -341,7 +341,7 @@ class Entry {
 
 class ZipFile extends EventEmitter {
   outputStream = new PassThrough();
-  entries = [];
+  /** @type {Entry[]} */ entries = [];
   outputStreamCursor = 0;
   ended = false; // .end() sets this
   allDone = false; // set when we've written the last bytes
@@ -611,9 +611,11 @@ function calculateFinalSize(zipfile) {
     }
     // we know this for sure, and this is important to know if we need ZIP64 format.
     entry.relativeOffsetOfLocalHeader = pretendOutputCursor;
-    const useZip64Format = entry.useZip64Format();
 
-    pretendOutputCursor += LOCAL_FILE_HEADER_FIXED_SIZE + entry.utf8FileName.length;
+    const useZip64Format = entry.useZip64Format();
+    const filenameLength = entry.filename.length;
+
+    pretendOutputCursor += LOCAL_FILE_HEADER_FIXED_SIZE + filenameLength;
     pretendOutputCursor += entry.uncompressedSize;
 
     if (!entry.crcAndFileSizeKnown) {
@@ -621,7 +623,7 @@ function calculateFinalSize(zipfile) {
       pretendOutputCursor += useZip64Format ? ZIP64_DATA_DESCRIPTOR_SIZE : DATA_DESCRIPTOR_SIZE;
     }
 
-    centralDirectorySize += CDR_FIXED_SIZE + entry.utf8FileName.length + entry.fileComment.length;
+    centralDirectorySize += CDR_FIXED_SIZE + filenameLength + entry.fileComment.length;
     if (useZip64Format) {
       centralDirectorySize += ZIP64_EIEF_SIZE;
     }
