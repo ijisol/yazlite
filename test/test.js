@@ -43,6 +43,7 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
 })();
 
 (function () {
+  const buffers = [Buffer.from('stream')];
   const zip64Combinations = [
     [0, 0, 0, 0, 0],
     [1, 1, 0, 0, 0],
@@ -66,7 +67,7 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
     zipfile.addBuffer(Buffer.from('buffer'), 'buffer.txt', options);
     options.forceZip64Format = !!zip64Config[3];
     options.size = 'stream'.length;
-    zipfile.addReadStream(Readable.from([Buffer.from('stream')]), 'stream.txt', options);
+    zipfile.addReadStream(Readable.from(buffers), 'stream.txt', options);
     options.size = null;
     zipfile.end({ forceZip64Format:!!zip64Config[4] }, async function (finalSize) {
       if (finalSize === -1) throw new Error('finalSize should be known');
@@ -110,7 +111,10 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
       }
     });
     zipfile.on('end', function () {
-      if (entryNames.length === 0) console.log('optional parameters and directories: pass');
+      if (entryNames.length === 0) {
+        return console.log('optional parameters and directories: pass');
+      }
+      throw new Error(`something was wrong`);
     });
   });
 })();
@@ -135,7 +139,10 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
       }
     });
     zipfile.on('end', function () {
-      if (entryNames.length === 0) console.log('justAddBuffer: pass');
+      if (entryNames.length === 0) {
+        return console.log('justAddBuffer: pass');
+      }
+      throw new Error(`something was wrong`);
     });
   });
 })();
@@ -170,21 +177,22 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
     zipfile.end({ comment: encodeCP437('0123456789 PK♣♠ 0123456789') });
   } catch (err) {
     if (err.toString().includes('comment contains end of central directory record signature')) {
-      console.log('block eocdr signature in CP437 encoded comment: pass');
-    } else {
-      throw new Error('expected error for including eocdr signature in CP437 encoded comment');
+      return console.log('block eocdr signature in CP437 encoded comment: pass');
     }
   }
+  throw new Error('expected error for including eocdr signature in CP437 encoded comment');
+})();
+
+(function () {
   try {
     const zipfile = new ZipFile();
     zipfile.end({ comment: Buffer.from('0123456789 \x50\x4b\x05\x06 0123456789', 'utf8') });
   } catch (err) {
     if (err.toString().includes('comment contains end of central directory record signature')) {
-      console.log('block eocdr signature in UTF-8 encoded comment: pass');
-    } else {
-      throw new Error('expected error for including eocdr signature in UTF-8 encoded comment');
+      return console.log('block eocdr signature in UTF-8 encoded comment: pass');
     }
   }
+  throw new Error('expected error for including eocdr signature in UTF-8 encoded comment');
 })();
 
 (function () {
@@ -207,14 +215,17 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
       const zipfile = await fromBufferPromise(data);
       const entryNames = ['hello.txt'];
       zipfile.on('entry', function (entry) {
-        const expectedName = entryNames.shift();
+        entryNames.shift();
         const fileComment = entry.fileComment.toString();
         if (fileComment !== testCase[1]) {
           throw new Error(`fileComment is wrong. ${JSON.stringify(fileComment)} !== ${JSON.stringify(testCase[1])}`);
         }
       });
       zipfile.on('end', function () {
-        if (entryNames.length === 0) console.log(`fileComment(${i}): pass`);
+        if (entryNames.length === 0) {
+          return console.log(`fileComment(${i}): pass`);
+        }
+        throw new Error(`something was wrong`);
       });
     });
   });
