@@ -75,14 +75,14 @@ class Entry {
     const isComment = (fileComment != null);
 
     if (fileName.length > 0xffff) {
-      throw new Error(`utf8 file name too long. ${fileName.length} > 65535`);
+      throw new RangeError(`metadataPath too long. ${fileName.length} > 65535`);
     }
 
     if (!isComment) {
     } else if (!(fileComment instanceof Uint8Array)) {
-      throw new Error('fileComment must be a Buffer/Uint8Array if it exists');
+      throw new TypeError('fileComment must be a Buffer/Uint8Array if it exists');
     } else if (fileComment.length > 0xffff) {
-      throw new Error('fileComment is too large');
+      throw new RangeError('fileComment is too large');
     }
 
     this.fileName = fileName;
@@ -106,7 +106,7 @@ class Entry {
    */
   setFileAttributesMode(mode, isDirectory) {
     if ((mode & 0xffff) !== mode) {
-      throw new Error(`invalid mode. expected: 0 <= ${mode} <= 65535`);
+      throw new RangeError(`invalid mode. expected: 0 <= ${mode} <= 65535`);
     }
     if (isDirectory) {
       // https://github.com/thejoshwolfe/yazl/pull/59
@@ -373,7 +373,7 @@ class ZipFile extends EventEmitter {
     metadataPath = validateMetadataPath(metadataPath, false);
     const bufferLength = buffer.length;
     if (bufferLength > 0x3fffffff) {
-      throw new Error(`buffer too large: ${bufferLength} > 1073741823`);
+      throw new RangeError(`buffer too large: ${bufferLength} > 1073741823`);
     }
     options ??= {};
     if (options.size != null) throw new Error('options.size not allowed');
@@ -444,9 +444,9 @@ class ZipFile extends EventEmitter {
     const comment = options.comment;
     if (comment == null) {
     } else if (!(comment instanceof Uint8Array)) {
-      throw new Error('comment must be a Buffer/Uint8Array if it exists');
+      throw new TypeError('comment must be a Buffer/Uint8Array if it exists');
     } else if (comment.length > 0xffff) {
-      throw new Error('comment is too large');
+      throw new RangeError('comment is too large');
     } else if (comment.includes(EOCDR_SIGNATURE)) {
       throw new Error('comment contains end of central directory record signature');
     } else {
