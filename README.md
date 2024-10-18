@@ -8,19 +8,32 @@ Josh Wolfe's [yazl](https://github.com/thejoshwolfe/yazl) is a great ZIP library
 
 The yazlite is a fork of the yazl for removing the dependency and converting legacy code to modern syntax.
 
+## Install
+
+This package is published in the npm registry as *[yazlite](https://www.npmjs.com/package/yazlite)*. Install using npm:
+
+```
+npm install yazlite
+```
+
+Or manually download tarball from [the latest release](https://github.com/ijisol/yazlite/releases).
+
 ## Usage
 
 ``` javascript
 import { Buffer } from 'node:buffer';
 import { createWriteStream } from 'node:fs';
-import { ZipFile } from 'yazlite';
+import { ZipFile, dateToDosDateTime } from 'yazlite';
 import { encodeCP437 } from 'yazlite/cp437'; // Optional
 
 const zipfile = new ZipFile();
 
+// Can use pre-calculated date/time
+const options = { mtime: dateToDosDateTime(new Date()) };
+
 // Can add only files, not directories.
-zipfile.addFile('file1.txt', 'file1.txt');
-zipfile.addFile('path/to/file.txt', 'path/in/zipfile.txt');
+zipfile.addFile('file1.txt', 'file1.txt', options);
+zipfile.addFile('path/to/file.txt', 'path/in/zipfile.txt', options);
 
 // `pipe()` can be called any time after the constructor.
 const stream = createWriteStream('output.zip');
@@ -78,6 +91,8 @@ The mtime and mode are stored in the zip file in the fields "last mod file time"
 "last mod file date", and "external file attributes".
 yazl does not store group and user ids in the zip file.
 
+If `mtime` is a `number`, it is considered a pre-calculated value. When setting the date/time of multiple files to the same, you can pre-convert the Date object into number using `dateToDosDateTime()` method.
+
 If `compress` is `true`, the file data will be deflated (compression method 8).
 If `compress` is `false`, the file data will be stored (compression method 0).
 
@@ -85,7 +100,7 @@ If `forceZip64Format` is `true`, yazl will use ZIP64 format in this entry's Data
 and Central Directory Record regardless of if it's required or not (this may be useful for testing.).
 Otherwise, yazl will use ZIP64 format where necessary.
 
-If `fileComment` exists (is not nullish), it shoud be a UTF-8 encoded `Buffer`.
+If `fileComment` exists (is not nullish), it shoud be a UTF-8 encoded `Buffer` or `Uint8Array`.
 In UTF-8, `fileComment` must be at most `0xffff` bytes in length.
 This becomes the "file comment" field in this entry's central directory file header.
 
@@ -178,7 +193,7 @@ If `metadataPath` does not end with a `"/"`, a `"/"` will be appended.
 ``` javascript
 {
   mtime: new Date(),
-  mode: 040775,
+  mode: 0o040775,
 }
 ```
 
@@ -203,7 +218,7 @@ and ZIP64 End of Central Directory Record regardless of whether or not they are 
 (this may be useful for testing.).
 Otherwise, yazl will include these structures if necessary.
 
-If `comment` exists (is not nullish), it should be a CP437 encoded `Buffer`.
+If `comment` exists (is not nullish), it should be a CP437 encoded `Buffer` or `Uint8Array`.
 The utility function `encodeCP437()` is provided optionally in `yazlite/cp437`.
 To use UTF-8 encoding at your own risk; it will not be validated.
 
@@ -250,6 +265,14 @@ This stream will remain open while you add entries until you `end()` the zip fil
 
 As a reminder, be careful using both `.on('data')` and `.pipe()` with this stream.
 In certain versions of node, you cannot use both `.on('data')` and `.pipe()` successfully.
+
+### dateToDosDateTime(date)
+
+`date` is a `Date` instance. Returns a 32-bit unsigned interger.
+
+The `mtime` in the `options` parameter of `addFile()`, `addReadStream()`, `addBuffer()` or `addEmptyDirectory()` is internally converted into a `number` using this method.
+
+If you want to make the last modified date/time of multiple files the same, it is efficient to pass a pre-calculated value using this.
 
 ## Regarding ZIP64 Support
 
@@ -347,6 +370,10 @@ Instead, each of the fields is limited to 65,535 bytes due to the length of each
 
 ## Change History
 
+- 3.1.0
+  - Bring back `dateToDosDateTime()`. Now it returns a 32-bit unsigned interger.
+  - Allow a `number` for `mtime`. For a scenario when pre-calculating a date/time value ​​using the above method.
+  - Allow `Uint8Array` instances when they should not be especially `Buffer`.
 - 3.0.1
   - Fix ZIP files created on Windows being unusable on Linux/MacOS (missing executable bits on directories)
 - 3.0.0
