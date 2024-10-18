@@ -75,14 +75,15 @@ class Entry {
    * @param {Options} options
    */
   constructor(metadataPath, isDirectory, options) {
+    const { mtime, fileComment } = options;
     const utf8FileName = Buffer.from(metadataPath);
-    this.utf8FileName = utf8FileName;
     if (utf8FileName.length > 0xffff) {
       throw new Error(`utf8 file name too long. ${utf8FileName.length} > 65535`);
     }
+    this.utf8FileName = utf8FileName;
     this.isDirectory = isDirectory;
     this.state = Entry.WAITING_FOR_METADATA;
-    this.setLastModDate(options.mtime ?? new Date());
+    this.lastmod = (typeof mtime === 'number') ? mtime : dateToDosDateTime(mtime ?? new Date());
     this.setFileAttributesMode(options.mode ?? 0o000664, isDirectory);
     if (isDirectory) {
       this.crcAndFileSizeKnown = true;
@@ -103,7 +104,6 @@ class Entry {
       this.compress = (options.compress != null) ? !!options.compress : true;
     }
     this.forceZip64Format = !!options.forceZip64Format;
-    const fileComment = options.fileComment;
     if (fileComment == null) {
       // no comment.
       this.fileComment = EMPTY_BUFFER;
@@ -116,24 +116,6 @@ class Entry {
     } else {
       throw new Error('fileComment must be a Buffer if it exists');
     }
-  }
-
-  /**
-   * @param {Date} date
-   */
-  setLastModDate(date) {
-    let dosDate = 0;
-    dosDate |= date.getDate() & 0x1f; // 1-31
-    dosDate |= ((date.getMonth() + 1) & 0xf) << 5; // 0-11, 1-12
-    dosDate |= ((date.getFullYear() - 1980) & 0x7f) << 9; // 0-128, 1980-2108
-  
-    let dosTime = 0;
-    dosTime |= Math.floor(date.getSeconds() / 2); // 0-59, 0-29 (lose odd numbers)
-    dosTime |= (date.getMinutes() & 0x3f) << 5; // 0-59
-    dosTime |= (date.getHours() & 0x1f) << 11; // 0-23
-
-    this.lastModFileTime = dosTime;
-    this.lastModFileDate = dosDate;
   }
 
   /**
@@ -212,10 +194,8 @@ class Entry {
     buffer.writeUInt16LE(generalPurposeBitFlag, 6);
     // compression method              2 bytes
     buffer.writeUInt16LE(this.getCompressionMethod(), 8);
-    // last mod file time              2 bytes
-    buffer.writeUInt16LE(this.lastModFileTime, 10);
-    // last mod file date              2 bytes
-    buffer.writeUInt16LE(this.lastModFileDate, 12);
+    // last mod file date/time         4 bytes
+    buffer.writeUInt32LE(this.lastmod, 10);
     // crc-32                          4 bytes
     buffer.writeUInt32LE(crc32, 14);
     // compressed size                 4 bytes
@@ -315,10 +295,8 @@ class Entry {
     fixedSizeStuff.writeUInt16LE(generalPurposeBitFlag, 8);
     // compression method              2 bytes
     fixedSizeStuff.writeUInt16LE(this.getCompressionMethod(), 10);
-    // last mod file time              2 bytes
-    fixedSizeStuff.writeUInt16LE(this.lastModFileTime, 12);
-    // last mod file date              2 bytes
-    fixedSizeStuff.writeUInt16LE(this.lastModFileDate, 14);
+    // last mod file date/time         4 bytes
+    fixedSizeStuff.writeUInt32LE(this.lastmod, 12);
     // crc-32                          4 bytes
     fixedSizeStuff.writeUInt32LE(this.crc32, 16);
     // compressed size                 4 bytes
@@ -389,7 +367,7 @@ class ZipFile extends EventEmitter {
         return this.emit('error', new Error(`not a file: ${realPath}`));
       }
       entry.uncompressedSize = stats.size;
-      if (options.mtime == null) entry.setLastModDate(stats.mtime);
+      if (options.mtime == null) entry.lastmod = dateToDosDateTime(stats.mtime);
       if (options.mode == null) entry.setFileAttributesMode(stats.mode, false);
       entry.setFileDataPumpFunction(() => {
         const readStream = createReadStream(realPath);
@@ -778,4 +756,20 @@ function validateMetadataPath(metadataPath, isDirectory) {
   return metadataPath;
 }
 
-export { ZipFile };
+/**
+ * @param {Date} date
+ * @returns {number}
+ */
+function dateToDosDateTime(date) {
+  let dosDate = date.getDate() & 0x1f; // 1-31
+  dosDate |= ((date.getMonth() + 1) & 0xf) << 5; // 0-11, 1-12
+  dosDate |= ((date.getFullYear() - 1980) & 0x7f) << 9; // 0-128, 1980-2108
+
+  let dosTime = Math.floor(date.getSeconds() / 2); // 0-59, 0-29 (lose odd numbers)
+  dosTime |= (date.getMinutes() & 0x3f) << 5; // 0-59
+  dosTime |= (date.getHours() & 0x1f) << 11; // 0-23
+
+  return (dosDate << 16) | dosTime;
+}
+
+export { ZipFile, dateToDosDateTime };
