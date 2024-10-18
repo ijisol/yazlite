@@ -10,6 +10,7 @@ import { DeflateRaw, crc32, deflateRaw } from 'node:zlib';
 const NO_COMPRESSION      = 0;
 const DEFLATE_COMPRESSION = 8;
 
+/** End of central directory record signature   */ const EOCDR_SIGNATURE  = Uint8Array.of(0x50, 0x4b, 0x05, 0x06);
 /** End of central directory record size        */ const EOCDR_SIZE       = 22;
 /** ZIP64 end of central directory record size  */ const ZIP64_EOCDR_SIZE = 56;
 /** ZIP64 end of central directory locator size */ const ZIP64_EOCDL_SIZE = 20;
@@ -26,30 +27,10 @@ const UNKNOWN_CRC32_AND_FILE_SIZES = 1 << 3;
 const DATA_DESCRIPTOR_SIZE       = 16;
 const ZIP64_DATA_DESCRIPTOR_SIZE = 24;
 
-/** End of central directory record signature */
-const EOCDR_SIGNATURE = Uint8Array.of(0x50, 0x4b, 0x05, 0x06);
-const EMPTY_BUFFER = new Uint8Array(0);
+const EMPTY_BUFFER  = new Uint8Array(0);
 const EMPTY_PROMISE = Promise.resolve();
 
 const deflateRawPromise = promisify(deflateRaw);
-
-class ByteCounter extends Transform {
-  byteCount = 0;
-
-  _transform(chunk, encoding, callback) {
-    this.byteCount += chunk.length;
-    callback(null, chunk);
-  }
-}
-
-class Crc32Watcher extends Transform {
-  crc32 = 0;
-
-  _transform(chunk, encoding, callback) {
-    this.crc32 = crc32(chunk, this.crc32);
-    callback(null, chunk);
-  }
-}
 
 /**
  * @typedef {Object} Options
@@ -71,13 +52,11 @@ class Entry {
     const { mtime, fileComment } = options;
     const fileName = Buffer.from(metadataPath, 'utf8');
     const compress = isDirectory ? false : Boolean(options.compress ?? true);
-    const isComment = (fileComment != null);
+    const hasComment = (fileComment != null);
 
     if (fileName.length > 0xffff) {
       throw new RangeError(`metadataPath too long. ${fileName.length} > 65535`);
-    }
-
-    if (!isComment) {
+    } else if (!hasComment) {
     } else if (!(fileComment instanceof Uint8Array)) {
       throw new TypeError('fileComment must be a Buffer/Uint8Array if it exists');
     } else if (fileComment.length > 0xffff) {
@@ -96,7 +75,7 @@ class Entry {
     this.compressionMethod = compress ? DEFLATE_COMPRESSION : NO_COMPRESSION;
     this.forceZip64Format = Boolean(options.forceZip64Format ?? false);
     this.relativeOffsetOfLocalHeader = 0;
-    this.fileComment = isComment ? fileComment : EMPTY_BUFFER;
+    this.fileComment = hasComment ? fileComment : EMPTY_BUFFER;
   }
 
   /**
@@ -139,8 +118,8 @@ class Entry {
     const fileNameLength = fileName.length;
     const buffer = Buffer.allocUnsafe(
       LOCAL_FILE_HEADER_FIXED_SIZE +
-      fileNameLength     // file name   (variable size)
-      // no extra fields // extra field (variable size)
+      fileNameLength // file name   (variable size)
+                     // extra field (variable size)
     );
 
     let uncompressedSize = 0;
@@ -184,8 +163,7 @@ class Entry {
     if (this.crcAndFileSizeKnown) {
       // the Mac Archive Utility requires this not be present unless we set general purpose bit 3
       return EMPTY_BUFFER;
-    }
-    if (this.useZip64Format()) {
+    } else if (this.useZip64Format()) {
       // ZIP64 format
       const buffer = Buffer.allocUnsafe(ZIP64_DATA_DESCRIPTOR_SIZE);
       // optional signature (unknown if anyone cares about this)
@@ -345,9 +323,9 @@ class ZipFile {
    * @param {?Options} [options]
    */
   addBuffer(buffer, metadataPath, options) {
-    const bufferLength = buffer.length;
-    if (bufferLength > 0x3fffffff) {
-      throw new RangeError(`buffer too large: ${bufferLength} > 1073741823`);
+    const uncompressedSize = buffer.length;
+    if (uncompressedSize > 0x3fffffff) {
+      throw new RangeError(`buffer too large: ${uncompressedSize} > (2^30 - 1)`);
     }
     metadataPath = validateMetadataPath(metadataPath, false);
     options ??= {};
@@ -357,7 +335,7 @@ class ZipFile {
       entry.compressedSize = buffer.length;
       appendStream(this, entry, writeBuffer, buffer);
     };
-    entry.uncompressedSize = bufferLength;
+    entry.uncompressedSize = uncompressedSize;
     entry.crc32 = crc32(buffer);
     entry.crcAndFileSizeKnown = true;
     this.entries.push(entry);
@@ -429,6 +407,24 @@ class ZipFile {
       this.outputStream.end();
       this.allDone = true;
     });
+  }
+}
+
+class ByteCounter extends Transform {
+  byteCount = 0;
+
+  _transform(chunk, encoding, callback) {
+    this.byteCount += chunk.length;
+    callback(null, chunk);
+  }
+}
+
+class Crc32Watcher extends Transform {
+  crc32 = 0;
+
+  _transform(chunk, encoding, callback) {
+    this.crc32 = crc32(chunk, this.crc32);
+    callback(null, chunk);
   }
 }
 
