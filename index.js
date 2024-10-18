@@ -1,14 +1,10 @@
 import { Buffer } from 'node:buffer';
-import { EventEmitter } from 'node:events';
-import { createReadStream, stat } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { PassThrough, Transform } from 'node:stream';
+import { finished } from 'node:stream/promises';
+import { promisify } from 'node:util';
 import { DeflateRaw, crc32, deflateRaw } from 'node:zlib';
-
-// Entry `state` field enum values
-const ENTRY_WAITING_FOR_METADATA    = 0;
-const ENTRY_READY_TO_PUMP_FILE_DATA = 1;
-const ENTRY_FILE_DATA_IN_PROGRESS   = 2;
-const ENTRY_FILE_DATA_DONE          = 3;
 
 // Entry `compressionMethod` field enum values
 const NO_COMPRESSION      = 0;
@@ -33,6 +29,9 @@ const ZIP64_DATA_DESCRIPTOR_SIZE = 24;
 /** End of central directory record signature */
 const EOCDR_SIGNATURE = Uint8Array.of(0x50, 0x4b, 0x05, 0x06);
 const EMPTY_BUFFER = new Uint8Array(0);
+const EMPTY_PROMISE = Promise.resolve();
+
+const deflateRawPromise = promisify(deflateRaw);
 
 class ByteCounter extends Transform {
   byteCount = 0;
@@ -87,7 +86,6 @@ class Entry {
 
     this.fileName = fileName;
     this.isDirectory = isDirectory;
-    this.state = ENTRY_WAITING_FOR_METADATA;
     this.lastMod = (typeof mtime === 'number') ? mtime : dateToDosDateTime(mtime ?? new Date());
     this.setFileAttributesMode(options.mode ?? 0o000664, isDirectory);
     this.crcAndFileSizeKnown = isDirectory;
@@ -119,15 +117,6 @@ class Entry {
     }
     // http://unix.stackexchange.com/questions/14705/the-zip-formats-external-file-attribute/14727#14727
     this.externalFileAttributes = (mode << 16) >>> 0;
-  }
-
-  /**
-   * @param {() => void} doFileDataPump
-   */
-  setFileDataPumpFunction(doFileDataPump) {
-    // doFileDataPump() should not call pumpEntries() directly. see issue #9.
-    this.doFileDataPump = doFileDataPump;
-    this.state = ENTRY_READY_TO_PUMP_FILE_DATA;
   }
 
   /**
@@ -305,16 +294,17 @@ class Entry {
   }
 }
 
-class ZipFile extends EventEmitter {
+class ZipFile {
+  /** @type {Entry[]}   */ entries  = [];
+  /** @type {Promise[]} */ loadings = [];
   outputStream = new PassThrough();
-  /** @type {Entry[]} */ entries = [];
   outputStreamCursor = 0;
+  offsetOfStartOfCentralDirectory = 0;
   ended = false; // .end() sets this
   allDone = false; // set when we've written the last bytes
   forceZip64Eocd = false; // configurable in .end()
-  /** @type {?Function} */ finalSizeCallback = null;
   comment = EMPTY_BUFFER;
-  offsetOfStartOfCentralDirectory = 0;
+  streaming = EMPTY_PROMISE;
 
   /**
    * @param {string} realPath
@@ -324,27 +314,16 @@ class ZipFile extends EventEmitter {
   addFile(realPath, metadataPath, options) {
     metadataPath = validateMetadataPath(metadataPath, false);
     options ??= {};
-
     const entry = new Entry(metadataPath, false, options);
-    this.entries.push(entry);
-    stat(realPath, (err, stats) => {
-      if (err) return this.emit('error', err);
-      if (!stats.isFile()) {
-        return this.emit('error', new Error(`not a file: ${realPath}`));
-      }
+    const loading = stat(realPath).then((stats) => {
+      if (!stats.isFile()) throw new Error(`not a file: ${realPath}`);
       entry.uncompressedSize = stats.size;
       if (options.mtime == null) entry.lastMod = dateToDosDateTime(stats.mtime);
-      if (options.mode == null)  entry.setFileAttributesMode(stats.mode, false);
-      entry.setFileDataPumpFunction(() => {
-        const readStream = createReadStream(realPath);
-        entry.state = ENTRY_FILE_DATA_IN_PROGRESS;
-        readStream.on('error', (err) => {
-          this.emit('error', err);
-        });
-        pumpFileDataReadStream(this, entry, readStream);
-      });
-      pumpEntries(this);
+      if (options.mode  == null) entry.setFileAttributesMode(stats.mode, false);
+      appendStream(this, entry, writeReadStream, createReadStream(realPath));
     });
+    this.entries.push(entry);
+    this.loadings.push(loading);
   }
 
   /**
@@ -357,11 +336,7 @@ class ZipFile extends EventEmitter {
     options ??= {};
     const entry = new Entry(metadataPath, false, options);
     this.entries.push(entry);
-    entry.setFileDataPumpFunction(() => {
-      entry.state = ENTRY_FILE_DATA_IN_PROGRESS;
-      pumpFileDataReadStream(this, entry, readStream);
-    });
-    pumpEntries(this);
+    appendStream(this, entry, writeReadStream, readStream);
   }
 
   /**
@@ -370,39 +345,26 @@ class ZipFile extends EventEmitter {
    * @param {?Options} [options]
    */
   addBuffer(buffer, metadataPath, options) {
-    metadataPath = validateMetadataPath(metadataPath, false);
     const bufferLength = buffer.length;
     if (bufferLength > 0x3fffffff) {
       throw new RangeError(`buffer too large: ${bufferLength} > 1073741823`);
     }
+    metadataPath = validateMetadataPath(metadataPath, false);
     options ??= {};
     if (options.size != null) throw new Error('options.size not allowed');
     const entry = new Entry(metadataPath, false, options);
-    const setCompressedBuffer = (compressedBuffer) => {
-      entry.compressedSize = compressedBuffer.length;
-      entry.setFileDataPumpFunction(() => {
-        writeToOutputStream(this, compressedBuffer);
-        writeToOutputStream(this, entry.getDataDescriptor());
-        entry.state = ENTRY_FILE_DATA_DONE;
-
-        // don't call pumpEntries() recursively.
-        // (also, don't call process.nextTick recursively.)
-        setImmediate(() => {
-          pumpEntries(this);
-        });
-      });
-      pumpEntries(this);
+    const flush = (buffer) => {
+      entry.compressedSize = buffer.length;
+      appendStream(this, entry, writeBuffer, buffer);
     };
     entry.uncompressedSize = bufferLength;
     entry.crc32 = crc32(buffer);
     entry.crcAndFileSizeKnown = true;
     this.entries.push(entry);
-    if (!entry.compress) {
-      setCompressedBuffer(buffer);
+    if (entry.compress) {
+      this.loadings.push(deflateRawPromise(buffer).then(flush));
     } else {
-      deflateRaw(buffer, (err, compressedBuffer) => {
-        setCompressedBuffer(compressedBuffer);
-      });
+      flush(buffer);
     }
   }
 
@@ -417,12 +379,7 @@ class ZipFile extends EventEmitter {
     if (options.compress != null) throw new Error('options.compress not allowed');
     const entry = new Entry(metadataPath, true, options);
     this.entries.push(entry);
-    entry.setFileDataPumpFunction(() => {
-      writeToOutputStream(this, entry.getDataDescriptor());
-      entry.state = ENTRY_FILE_DATA_DONE;
-      pumpEntries(this);
-    });
-    pumpEntries(this);
+    appendStream(this, entry, writeEmptyDirectory);
   }
 
   /**
@@ -430,16 +387,13 @@ class ZipFile extends EventEmitter {
    * @param {?Function} [finalSizeCallback]
    */
   end(options, finalSizeCallback) {
-    if (this.ended) return;
+    if (this.ended || this.allDone) return;
     if (typeof options === 'function') {
       finalSizeCallback = options;
       options = {};
     } else {
       options ??= {};
     }
-    this.ended = true;
-    this.finalSizeCallback = finalSizeCallback;
-    this.forceZip64Eocd = Boolean(options.forceZip64Format ?? false);
 
     const comment = options.comment;
     if (comment == null) {
@@ -453,7 +407,28 @@ class ZipFile extends EventEmitter {
       this.comment = comment;
     }
 
-    pumpEntries(this);
+    this.ended = true;
+    this.forceZip64Eocd = Boolean(options.forceZip64Format ?? false);
+
+    const loading = Promise.all(this.loadings);
+    if (finalSizeCallback != null) {
+      loading.then(() => finalSizeCallback(calculateFinalSize(this)));
+    }
+
+    // all cought up on writing entries
+    loading.then(() => this.streaming).then(() => {
+      // head for the exit
+      this.offsetOfStartOfCentralDirectory = this.outputStreamCursor;
+      const entries = this.entries;
+      const entriesLength = entries.length;
+      for (let i = 0; i < entriesLength; ++i) {
+        const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
+        writeToOutputStream(this, centralDirectoryRecord);
+      }
+      writeToOutputStream(this, getEndOfCentralDirectoryRecord(this));
+      this.outputStream.end();
+      this.allDone = true;
+    });
   }
 }
 
@@ -469,91 +444,73 @@ function writeToOutputStream(zipfile, buffer) {
 /**
  * @param {ZipFile} zipfile
  * @param {Entry} entry
- * @param {ReadStream} readStream
+ * @param {Buffer} buffer
+ * @returns {Promise<void>}
  */
-function pumpFileDataReadStream(zipfile, entry, readStream) {
+async function writeBuffer(zipfile, entry, buffer) {
+  writeToOutputStream(zipfile, buffer);
+  writeToOutputStream(zipfile, entry.getDataDescriptor());
+}
+
+/**
+ * @param {ZipFile} zipfile
+ * @param {Entry} entry
+ * @returns {Promise<void>}
+ */
+async function writeEmptyDirectory(zipfile, entry) {
+  writeToOutputStream(zipfile, entry.getDataDescriptor());
+}
+
+/**
+ * @param {ZipFile} zipfile
+ * @param {Entry} entry
+ * @param {ReadStream} readStream
+ * @returns {Promise<void>}
+ */
+async function writeReadStream(zipfile, entry, readStream) {
   const crc32Watcher = new Crc32Watcher();
   const uncompressedSizeCounter = new ByteCounter();
   const compressor = entry.compress ? new DeflateRaw() : new PassThrough();
   const compressedSizeCounter = new ByteCounter();
+
   readStream.pipe(crc32Watcher)
             .pipe(uncompressedSizeCounter)
             .pipe(compressor)
             .pipe(compressedSizeCounter)
             .pipe(zipfile.outputStream, { end: false });
-  compressedSizeCounter.on('end', () => {
-    entry.crc32 = crc32Watcher.crc32;
-    if (entry.uncompressedSize === -1) {
-      entry.uncompressedSize = uncompressedSizeCounter.byteCount;
-    } else if (entry.uncompressedSize !== uncompressedSizeCounter.byteCount) {
-      return zipfile.emit('error', new Error('file data stream has unexpected number of bytes'));
-    }
-    entry.compressedSize = compressedSizeCounter.byteCount;
-    zipfile.outputStreamCursor += entry.compressedSize;
-    writeToOutputStream(zipfile, entry.getDataDescriptor());
-    entry.state = ENTRY_FILE_DATA_DONE;
-    pumpEntries(zipfile);
+
+  await finished(compressedSizeCounter);
+
+  if (entry.uncompressedSize === -1) {
+    entry.uncompressedSize = uncompressedSizeCounter.byteCount;
+  } else if (entry.uncompressedSize !== uncompressedSizeCounter.byteCount) {
+    throw new Error('file data stream has unexpected number of bytes');
+  }
+
+  entry.crc32 = crc32Watcher.crc32;
+  entry.compressedSize = compressedSizeCounter.byteCount;
+  zipfile.outputStreamCursor += entry.compressedSize;
+
+  writeToOutputStream(zipfile, entry.getDataDescriptor());
+}
+
+/**
+ * @param {ZipFile} zipfile
+ * @param {Entry} entry
+ * @param {(zipfile: ZipFile, entry: Entry, value: *) => Promise<void>} writer
+ * @param {*} [value]
+ */
+function appendStream(zipfile, entry, writer, value) {
+  zipfile.streaming = zipfile.streaming.then(() => {
+    entry.relativeOffsetOfLocalHeader = zipfile.outputStreamCursor;
+    writeToOutputStream(zipfile, entry.getLocalFileHeader());
+    return writer(zipfile, entry, value);
   });
 }
 
 /**
  * @param {ZipFile} zipfile
- */
-function getFirstNotDoneEntry(zipfile) {
-  const entries = zipfile.entries;
-  const entriesLength = entries.length;
-  for (let i = 0; i < entriesLength; ++i) {
-    const entry = entries[i];
-    if (entry.state < ENTRY_FILE_DATA_DONE) return entry;
-  }
-  return null;
-}
-
-/**
- * @param {ZipFile} zipfile
- */
-function pumpEntries(zipfile) {
-  if (zipfile.allDone) return;
-  // first check if finalSize is finally known
-  if (zipfile.ended && zipfile.finalSizeCallback != null) {
-    const finalSize = calculateFinalSize(zipfile);
-    if (finalSize != null) {
-      // we have an answer
-      zipfile.finalSizeCallback(finalSize);
-      zipfile.finalSizeCallback = null;
-    }
-  }
-
-  // pump entries
-  const entry = getFirstNotDoneEntry(zipfile);
-  if (entry != null) {
-    // this entry is not done yet
-    const entryState = entry.state;
-    if (entryState < ENTRY_READY_TO_PUMP_FILE_DATA) return; // input file not open yet
-    if (entryState === ENTRY_FILE_DATA_IN_PROGRESS) return; // we'll get there
-    // start with local file header
-    entry.relativeOffsetOfLocalHeader = zipfile.outputStreamCursor;
-    writeToOutputStream(zipfile, entry.getLocalFileHeader());
-    entry.doFileDataPump();
-  } else if (zipfile.ended) {
-    // all cought up on writing entries
-    const entries = zipfile.entries;
-    const entriesLength = entries.length;
-    // head for the exit
-    zipfile.offsetOfStartOfCentralDirectory = zipfile.outputStreamCursor;
-    for (let i = 0; i < entriesLength; ++i) {
-      const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
-      writeToOutputStream(zipfile, centralDirectoryRecord);
-    }
-    writeToOutputStream(zipfile, getEndOfCentralDirectoryRecord(zipfile));
-    zipfile.outputStream.end();
-    zipfile.allDone = true;
-  }
-}
-
-/**
- * @param {ZipFile} zipfile
- * @returns {number|null}
+ * @returns {number}
  */
 function calculateFinalSize(zipfile) {
   const entries = zipfile.entries;
@@ -564,13 +521,9 @@ function calculateFinalSize(zipfile) {
     const entry = entries[i];
     // compression is too hard to predict
     if (entry.compress) return -1;
-    if (entry.state >= ENTRY_READY_TO_PUMP_FILE_DATA) {
-      // if addReadStream was called without providing the size, we can't predict the final size
-      if (entry.uncompressedSize === -1) return -1;
-    } else if (entry.uncompressedSize === -1) {
-      // if we're still waiting for fs.stat, we might learn the size someday
-      return null;
-    }
+    // if addReadStream was called without providing the size, can't predict the final size
+    if (entry.uncompressedSize === -1) return -1;
+
     // we know this for sure, and this is important to know if we need ZIP64 format.
     entry.relativeOffsetOfLocalHeader = pretendOutputCursor;
 
@@ -586,20 +539,19 @@ function calculateFinalSize(zipfile) {
     }
 
     centralDirectorySize += CDR_FIXED_SIZE + fileNameLength + entry.fileComment.length;
-    if (useZip64Format) {
-      centralDirectorySize += ZIP64_EIEF_SIZE;
-    }
+    if (useZip64Format) centralDirectorySize += ZIP64_EIEF_SIZE;
   }
 
-  let endOfCentralDirectorySize = 0;
-  if (zipfile.forceZip64Eocd ||
-      entriesLength >= 0xffff ||
-      centralDirectorySize >= 0xffff ||
-      pretendOutputCursor >= 0xffffffff) {
+  let endOfCentralDirectorySize = EOCDR_SIZE + zipfile.comment.length;
+  if (
+    (zipfile.forceZip64Eocd) ||
+    (entriesLength >= 0xffff) ||
+    (centralDirectorySize >= 0xffff) ||
+    (pretendOutputCursor >= 0xffffffff)
+  ) {
     // use zip64 end of central directory stuff
     endOfCentralDirectorySize += ZIP64_EOCDR_SIZE + ZIP64_EOCDL_SIZE;
   }
-  endOfCentralDirectorySize += EOCDR_SIZE + zipfile.comment.length;
   return pretendOutputCursor + centralDirectorySize + endOfCentralDirectorySize;
 }
 
