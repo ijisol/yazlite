@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { PassThrough, Transform } from 'node:stream';
+import { Transform } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { DeflateRaw, crc32, deflateRaw } from 'node:zlib';
@@ -272,11 +272,28 @@ class Entry {
   }
 }
 
+class ByteCounter extends Transform {
+  bytesWritten = 0;
+
+  _transform(chunk, encoding, callback) {
+    this.bytesWritten += chunk.length;
+    callback(null, chunk);
+  }
+}
+
+class Crc32Watcher extends Transform {
+  crc32 = 0;
+
+  _transform(chunk, encoding, callback) {
+    this.crc32 = crc32(chunk, this.crc32);
+    callback(null, chunk);
+  }
+}
+
 class ZipFile {
   /** @type {Entry[]}   */ entries  = [];
   /** @type {Promise[]} */ loadings = [];
-  outputStream = new PassThrough();
-  outputStreamCursor = 0;
+  outputStream = new ByteCounter();
   offsetOfStartOfCentralDirectory = 0;
   ended = false; // .end() sets this
   allDone = false; // set when we've written the last bytes
@@ -298,7 +315,7 @@ class ZipFile {
       entry.uncompressedSize = stats.size;
       if (options.mtime == null) entry.lastMod = dateToDosDateTime(stats.mtime);
       if (options.mode  == null) entry.setFileAttributesMode(stats.mode, false);
-      appendStream(this, entry, writeReadStream, createReadStream(realPath));
+      appendStream(this, entry, writeReadStream, entry, createReadStream(realPath));
     });
     this.entries.push(entry);
     this.loadings.push(loading);
@@ -314,7 +331,7 @@ class ZipFile {
     options ??= {};
     const entry = new Entry(metadataPath, false, options);
     this.entries.push(entry);
-    appendStream(this, entry, writeReadStream, readStream);
+    appendStream(this, entry, writeReadStream, entry, readStream);
   }
 
   /**
@@ -357,7 +374,7 @@ class ZipFile {
     if (options.compress != null) throw new Error('options.compress not allowed');
     const entry = new Entry(metadataPath, true, options);
     this.entries.push(entry);
-    appendStream(this, entry, writeEmptyDirectory);
+    appendStream(this, entry);
   }
 
   /**
@@ -396,65 +413,26 @@ class ZipFile {
     // all cought up on writing entries
     loading.then(() => this.streaming).then(() => {
       // head for the exit
-      this.offsetOfStartOfCentralDirectory = this.outputStreamCursor;
+      this.offsetOfStartOfCentralDirectory = this.outputStream.bytesWritten;
       const entries = this.entries;
       const entriesLength = entries.length;
       for (let i = 0; i < entriesLength; ++i) {
         const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
-        writeToOutputStream(this, centralDirectoryRecord);
+        this.outputStream.write(centralDirectoryRecord);
       }
-      writeToOutputStream(this, getEndOfCentralDirectoryRecord(this));
+      this.outputStream.write(getEndOfCentralDirectoryRecord(this));
       this.outputStream.end();
       this.allDone = true;
     });
   }
 }
 
-class ByteCounter extends Transform {
-  byteCount = 0;
-
-  _transform(chunk, encoding, callback) {
-    this.byteCount += chunk.length;
-    callback(null, chunk);
-  }
-}
-
-class Crc32Watcher extends Transform {
-  crc32 = 0;
-
-  _transform(chunk, encoding, callback) {
-    this.crc32 = crc32(chunk, this.crc32);
-    callback(null, chunk);
-  }
-}
-
 /**
  * @param {ZipFile} zipfile
  * @param {Buffer} buffer
  */
-function writeToOutputStream(zipfile, buffer) {
+function writeBuffer(zipfile, buffer) {
   zipfile.outputStream.write(buffer);
-  zipfile.outputStreamCursor += buffer.length;
-}
-
-/**
- * @param {ZipFile} zipfile
- * @param {Entry} entry
- * @param {Buffer} buffer
- * @returns {Promise<void>}
- */
-async function writeBuffer(zipfile, entry, buffer) {
-  writeToOutputStream(zipfile, buffer);
-  writeToOutputStream(zipfile, entry.getDataDescriptor());
-}
-
-/**
- * @param {ZipFile} zipfile
- * @param {Entry} entry
- * @returns {Promise<void>}
- */
-async function writeEmptyDirectory(zipfile, entry) {
-  writeToOutputStream(zipfile, entry.getDataDescriptor());
 }
 
 /**
@@ -465,42 +443,32 @@ async function writeEmptyDirectory(zipfile, entry) {
  */
 async function writeReadStream(zipfile, entry, readStream) {
   const crc32Watcher = new Crc32Watcher();
-  const uncompressedSizeCounter = new ByteCounter();
-  const compressor = entry.compress ? new DeflateRaw() : new PassThrough();
-  const compressedSizeCounter = new ByteCounter();
-
-  readStream.pipe(crc32Watcher)
-            .pipe(uncompressedSizeCounter)
-            .pipe(compressor)
-            .pipe(compressedSizeCounter)
-            .pipe(zipfile.outputStream, { end: false });
-
-  await finished(compressedSizeCounter);
-
+  const uncompressedCounter = new ByteCounter();
+  readStream = readStream.pipe(crc32Watcher).pipe(uncompressedCounter);
+  if (entry.compress) readStream = readStream.pipe(new DeflateRaw()).pipe(new ByteCounter());
+  readStream.pipe(zipfile.outputStream, { end: false });
+  await finished(readStream);
+  entry.compressedSize = readStream.bytesWritten;
+  entry.crc32 = crc32Watcher.crc32;
   if (entry.uncompressedSize === -1) {
-    entry.uncompressedSize = uncompressedSizeCounter.byteCount;
-  } else if (entry.uncompressedSize !== uncompressedSizeCounter.byteCount) {
+    entry.uncompressedSize = uncompressedCounter.bytesWritten;
+  } else if (entry.uncompressedSize !== uncompressedCounter.bytesWritten) {
     throw new Error('file data stream has unexpected number of bytes');
   }
-
-  entry.crc32 = crc32Watcher.crc32;
-  entry.compressedSize = compressedSizeCounter.byteCount;
-  zipfile.outputStreamCursor += entry.compressedSize;
-
-  writeToOutputStream(zipfile, entry.getDataDescriptor());
 }
 
 /**
  * @param {ZipFile} zipfile
  * @param {Entry} entry
- * @param {(zipfile: ZipFile, entry: Entry, value: *) => Promise<void>} writer
- * @param {*} [value]
+ * @param {Function} [writer]
+ * @param {*} [...args]
  */
-function appendStream(zipfile, entry, writer, value) {
-  zipfile.streaming = zipfile.streaming.then(() => {
-    entry.relativeOffsetOfLocalHeader = zipfile.outputStreamCursor;
-    writeToOutputStream(zipfile, entry.getLocalFileHeader());
-    return writer(zipfile, entry, value);
+function appendStream(zipfile, entry, writer, ...args) {
+  zipfile.streaming = zipfile.streaming.then(async () => {
+    entry.relativeOffsetOfLocalHeader = zipfile.outputStream.bytesWritten;
+    zipfile.outputStream.write(entry.getLocalFileHeader());
+    if (writer !== undefined) await writer(zipfile, ...args);
+    zipfile.outputStream.write(entry.getDataDescriptor());
   });
 }
 
@@ -557,15 +525,15 @@ function calculateFinalSize(zipfile) {
  */
 function getEndOfCentralDirectoryRecord(zipfile) {
   const { entries: { length: entriesLength },
+          outputStream: { bytesWritten },
           comment,
           forceZip64Eocd,
-          offsetOfStartOfCentralDirectory,
-          outputStreamCursor } = zipfile;
+          offsetOfStartOfCentralDirectory } = zipfile;
 
   let needZip64Format = (forceZip64Eocd || entriesLength >= 0xffff);
   const normalEntriesLength = needZip64Format ? 0xffff : entriesLength;
 
-  const sizeOfCentralDirectory = outputStreamCursor - offsetOfStartOfCentralDirectory;
+  const sizeOfCentralDirectory = bytesWritten - offsetOfStartOfCentralDirectory;
   let normalSizeOfCentralDirectory = sizeOfCentralDirectory;
   if (forceZip64Eocd || sizeOfCentralDirectory >= 0xffffffff) {
     normalSizeOfCentralDirectory = 0xffffffff;
@@ -635,7 +603,7 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   // number of the disk with the start of the zip64 end of central directory  4 bytes
   zip64Buffer.writeUInt32LE(0, ZIP64_EOCDR_SIZE + 4);
   // relative offset of the zip64 end of central directory record             8 bytes
-  zip64Buffer.writeBigUInt64LE(BigInt(outputStreamCursor), ZIP64_EOCDR_SIZE + 8);
+  zip64Buffer.writeBigUInt64LE(BigInt(bytesWritten), ZIP64_EOCDR_SIZE + 8);
   // total number of disks                                                    4 bytes
   zip64Buffer.writeUInt32LE(1, ZIP64_EOCDR_SIZE + 16);
 
