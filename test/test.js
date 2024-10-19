@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createReadStream, readFileSync } from 'node:fs';
-import { Readable } from 'node:stream';
+import { Readable, getDefaultHighWaterMark } from 'node:stream';
+import { finished } from 'node:stream/promises';
 import { buffer as consumeBuffer } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -229,4 +230,19 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
       });
     });
   });
+})();
+
+(async function justPutLargeStream() {
+  const zipfile = new ZipFile();
+  const outputStream = zipfile.outputStream;
+  const readStream = Readable.from((function* () {
+    const size = getDefaultHighWaterMark();
+    for (let i = 0; i < 0xffffffff; i += size) {
+      yield Buffer.allocUnsafe(size);
+    }
+  })());
+  zipfile.addReadStream(readStream, 'hello.txt');
+  zipfile.end();
+  await finished(outputStream);
+  console.log('just put large strean: pass');
 })();
