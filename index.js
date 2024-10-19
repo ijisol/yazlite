@@ -111,6 +111,7 @@ class Entry {
   }
 
   /**
+   * @todo Is supported ZIP64 really?
    * @returns {Buffer}
    */
   getLocalFileHeader() {
@@ -340,10 +341,6 @@ class ZipFile {
    * @param {?Options} [options]
    */
   addBuffer(buffer, metadataPath, options) {
-    const uncompressedSize = buffer.length;
-    if (uncompressedSize > 0x3fffffff) {
-      throw new RangeError(`buffer too large: ${uncompressedSize} > (2^30 - 1)`);
-    }
     metadataPath = validateMetadataPath(metadataPath, false);
     options ??= {};
     if (options.size != null) throw new Error('options.size not allowed');
@@ -352,7 +349,7 @@ class ZipFile {
       entry.compressedSize = buffer.length;
       appendStream(this, entry, writeBuffer, buffer);
     };
-    entry.uncompressedSize = uncompressedSize;
+    entry.uncompressedSize = buffer.length;
     entry.crc32 = crc32(buffer);
     entry.crcAndFileSizeKnown = true;
     this.entries.push(entry);

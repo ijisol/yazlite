@@ -170,14 +170,10 @@ In order to require the ZIP64 format for a local file header,
 the provided `buffer` parameter would need to exceed `0xfffffffe` in length.
 Alternatively, the `buffer` parameter might not exceed `0xfffffffe` in length,
 but zlib compression fails to compress the buffer and actually inflates the data to more than `0xfffffffe` in length.
-Both of these scenarios are not allowed by yazl, and those are enforced by a size limit on the `buffer` parameter.
+Both of these scenarios are not allowed by yazl.
 
 According to [this zlib documentation](http://www.zlib.net/zlib_tech.html),
 the worst case compression results in "an expansion of at most 13.5%, plus eleven bytes".
-Furthermore, some configurations of Node.js impose a size limit of `0x3fffffff` on every `Buffer` object.
-Running this size through the worst case compression of zlib still produces a size less than `0xfffffffe` bytes,
-
-Therefore, yazl enforces that the provided `buffer` parameter must be at most `0x3fffffff` bytes long.
 
 #### addEmptyDirectory(metadataPath, [options])
 
