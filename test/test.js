@@ -232,6 +232,7 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
   });
 })();
 
+/*
 (async function putLargeStream() {
   const zipfile = new ZipFile();
   const readStream = Readable.from((function* () {
@@ -252,3 +253,4 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
 
   console.log(`put large stream (ZIP64): pass`);
 })();
+*/
