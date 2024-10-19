@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createReadStream, readFileSync } from 'node:fs';
-import { Readable, Transform, getDefaultHighWaterMark } from 'node:stream';
+import { Readable, Writable, getDefaultHighWaterMark } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { buffer as consumeBuffer } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
@@ -244,8 +244,8 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
 
   zipfile.addReadStream(readStream, 'hello.txt');
   zipfile.end();
-  await pipeline(zipfile.outputStream, new Transform({
-    transform(chunk, encoding, callback) {
+  await pipeline(zipfile.outputStream, new Writable({
+    write(chunk, encoding, callback) {
       callback(null); // Just throw away
     }
   }));
