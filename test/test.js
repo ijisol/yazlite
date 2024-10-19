@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createReadStream, readFileSync } from 'node:fs';
-import { Readable, getDefaultHighWaterMark } from 'node:stream';
-import { finished } from 'node:stream/promises';
+import { Readable, Transform, getDefaultHighWaterMark } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { buffer as consumeBuffer } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -232,17 +232,23 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
   });
 })();
 
-(async function justPutLargeStream() {
+(async function putLargeStream() {
   const zipfile = new ZipFile();
-  const outputStream = zipfile.outputStream;
   const readStream = Readable.from((function* () {
     const size = getDefaultHighWaterMark();
+    const buffer = Buffer.allocUnsafe(size);
     for (let i = 0; i < 0xffffffff; i += size) {
-      yield Buffer.allocUnsafe(size);
+      yield buffer;
     }
   })());
+
   zipfile.addReadStream(readStream, 'hello.txt');
   zipfile.end();
-  await finished(outputStream);
-  console.log('just put large strean: pass');
+  await pipeline(zipfile.outputStream, new Transform({
+    transform(chunk, encoding, callback) {
+      callback(null); // Just throw away
+    }
+  }));
+
+  console.log(`put large stream (ZIP64): pass`);
 })();
