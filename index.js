@@ -10,12 +10,13 @@ import { DeflateRaw, crc32, deflateRaw } from 'node:zlib';
 const NO_COMPRESSION      = 0;
 const DEFLATE_COMPRESSION = 8;
 
-/** End of central directory record signature   */ const EOCDR_SIGNATURE  = Uint8Array.of(0x50, 0x4b, 0x05, 0x06);
 /** End of central directory record size        */ const EOCDR_SIZE       = 22;
 /** ZIP64 end of central directory record size  */ const ZIP64_EOCDR_SIZE = 56;
 /** ZIP64 end of central directory locator size */ const ZIP64_EOCDL_SIZE = 20;
 /** Central directory record fixed size         */ const CDR_FIXED_SIZE   = 46;
 /** ZIP64 extended information extra field size */ const ZIP64_EIEF_SIZE  = 28;
+/** End of central directory record signature   */
+const EOCDR_SIGNATURE  = Uint8Array.of(0x50, 0x4b, 0x05, 0x06);
 
 const LOCAL_FILE_HEADER_FIXED_SIZE = 30;
 const VERSION_NEEDED_TO_EXTRACT_UTF8 = 20;
@@ -283,9 +284,11 @@ class ByteCounter extends Transform {
 }
 
 class Crc32Watcher extends Transform {
+  bytesWritten = 0;
   crc32 = 0;
 
   _transform(chunk, encoding, callback) {
+    this.bytesWritten += chunk.length;
     this.crc32 = crc32(chunk, this.crc32);
     callback(null, chunk);
   }
@@ -440,16 +443,15 @@ function writeBuffer(zipfile, buffer) {
  */
 async function writeReadStream(zipfile, entry, readStream) {
   const crc32Watcher = new Crc32Watcher();
-  const uncompressedCounter = new ByteCounter();
-  readStream = readStream.pipe(crc32Watcher).pipe(uncompressedCounter);
-  if (entry.compress) readStream = readStream.pipe(new DeflateRaw()).pipe(new ByteCounter());
+  readStream = readStream.pipe(crc32Watcher);
+  if (entry.compress) readStream = readStream.pipe(new DeflateRaw());
   readStream.pipe(zipfile.outputStream, { end: false });
   await finished(readStream);
   entry.compressedSize = readStream.bytesWritten;
   entry.crc32 = crc32Watcher.crc32;
   if (entry.uncompressedSize === -1) {
-    entry.uncompressedSize = uncompressedCounter.bytesWritten;
-  } else if (entry.uncompressedSize !== uncompressedCounter.bytesWritten) {
+    entry.uncompressedSize = crc32Watcher.bytesWritten;
+  } else if (entry.uncompressedSize !== crc32Watcher.bytesWritten) {
     throw new Error('file data stream has unexpected number of bytes');
   }
 }
