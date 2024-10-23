@@ -27,7 +27,8 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
   zipfile.addReadStream(createReadStream(filename), 'readStream.txt', options);
   zipfile.addBuffer(buffer, 'with/directories.txt', options);
   zipfile.addBuffer(buffer, 'with\\windows-paths.txt', options);
-  const finalSize = await zipfile.end(true);
+  zipfile.end();
+  const finalSize = await zipfile.calculateTotalSize();
   if (finalSize !== -1) {
     throw new Error('finalSize is impossible to know before compression');
   } else {
@@ -72,7 +73,8 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
     options.size = 'stream'.length;
     zipfile.addReadStream(Readable.from(buffers), 'stream.txt', options);
     options.size = null;
-    const finalSize = await zipfile.end({ forceZip64Format:!!zip64Config[4] }, true);
+    zipfile.end({ forceZip64Format: !!zip64Config[4] });
+    const finalSize = await zipfile.calculateTotalSize();
     if (finalSize === -1) throw new Error('finalSize should be known');
     const data = await consumeBuffer(zipfile.outputStream);
     if (data.length !== finalSize) {
@@ -91,7 +93,8 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
   zipfile.addReadStream(Readable.from([Buffer.from('stream')]), 'c.txt');
   zipfile.addEmptyDirectory('d/');
   zipfile.addEmptyDirectory('e', { mode: 0o000644 });
-  const finalSize = await zipfile.end(true);
+  zipfile.end();
+  const finalSize = await zipfile.calculateTotalSize();
   if (finalSize !== -1) {
     throw new Error('finalSize should be unknown');
   } else {
@@ -128,7 +131,8 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
   const outputStream = zipfile.outputStream;
   // all options parameters are optional
   zipfile.addBuffer(Buffer.from('hello'), 'hello.txt', { compress: false });
-  const finalSize = await zipfile.end(true);
+  zipfile.end();
+  const finalSize = await zipfile.calculateTotalSize();
   if (finalSize === -1) {
     throw new Error('finalSize should be known');
   } else {
@@ -162,7 +166,8 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
   testCases.forEach(async (testCase, i) => {
     const zipfile = new ZipFile();
     const outputStream = zipfile.outputStream;
-    const finalSize = await zipfile.end({ comment: testCase[0] }, true);
+    zipfile.end({ comment: testCase[0] });
+    const finalSize = await zipfile.calculateTotalSize();
     if (finalSize === -1) {
       throw new Error('finalSize should be known');
     } else {
@@ -217,7 +222,8 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
     const outputStream = zipfile.outputStream;
     // all options parameters are optional
     zipfile.addBuffer(Buffer.from('hello'), 'hello.txt', { compress: false, fileComment: testCase[0] });
-    const finalSize = await zipfile.end(true);
+    zipfile.end();
+    const finalSize = await zipfile.calculateTotalSize();
     if (finalSize === -1) {
       throw new Error('finalSize should be known');
     } else {
@@ -248,15 +254,21 @@ const weirdChars = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕
   const { size } = await stat(filename);
   const zipfile = new ZipFile();
   zipfile.on('error', (err) => {
-    const { message } = err;
-    if (message === 'file data stream has unexpected number of bytes') {
-      console.log('addReadStream error handling: pass');
-    } else if (message.startsWith('not a file:')) {
-      console.log('addFile error handling: pass');
-    } else {
-      throw err;
+    if (err.message === 'file data stream has unexpected number of bytes') {
+      return console.log('addReadStream error handling: pass');
     }
+    throw err;
   });
   zipfile.addReadStream(createReadStream(filename), 'invalid-size', { size: size - 1 });
+})();
+
+(async function () {
+  const zipfile = new ZipFile();
+  zipfile.on('error', (err) => {
+    if (err.message.startsWith('not a file:')) {
+      return console.log('addFile error handling: pass');
+    }
+    throw err;
+  });
   zipfile.addFile(fileURLToPath(new URL('./', import.meta.url)), 'not-a-file');
 })();

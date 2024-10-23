@@ -309,15 +309,6 @@ class Entry {
   }
 }
 
-class ByteCounter extends Transform {
-  bytesWritten = 0;
-
-  _transform(chunk, encoding, callback) {
-    this.bytesWritten += chunk.length;
-    callback(null, chunk);
-  }
-}
-
 class Crc32Watcher extends Transform {
   bytesWritten = 0;
   crc32 = 0;
@@ -329,16 +320,37 @@ class Crc32Watcher extends Transform {
   }
 }
 
-class ZipFile extends EventEmitter {
+class ZipFile extends Transform {
   /** @type {Entry[]}   */ entries  = [];
   /** @type {Promise[]} */ loadings = [];
-  outputStream = new ByteCounter();
+  bytesWritten = 0;
   offsetOfStartOfCentralDirectory = 0;
   ended = false; // .end() sets this
+  loaded = false;
   allDone = false; // set when we've written the last bytes
   forceZip64Eocd = false; // configurable in .end()
   comment = EMPTY_BUFFER;
   streaming = EMPTY_PROMISE;
+  outputStream = this;
+
+  _flush(callback) {
+    // head for the exit
+    this.offsetOfStartOfCentralDirectory = this.bytesWritten;
+    const entries = this.entries;
+    const totalEntries = entries.length;
+    for (let i = 0; i < totalEntries; ++i) {
+      const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
+      this.push(centralDirectoryRecord);
+    }
+    this.push(getEndOfCentralDirectoryRecord(this));
+    this.allDone = true;
+    callback(null);
+  }
+
+  _transform(chunk, encoding, callback) {
+    this.bytesWritten += chunk.length;
+    callback(null, chunk);
+  }
 
   /**
    * @param {string} realPath
@@ -413,21 +425,23 @@ class ZipFile extends EventEmitter {
   }
 
   /**
-   * Instead of taking a callback function, returns a Promise of total size.
-   * @param {?Function|Object} [options]
-   * @param {?boolean} [returnsTotalSize]
-   * @returns {Promise<void>|Promise<number>}
+   * @returns {Promise<number>}
    */
-  end(options, returnsTotalSize) {
-    if (this.ended || this.allDone) return EMPTY_PROMISE;
+  async calculateTotalSize() {
+    if (this.loaded) return calculateTotalSize(this);
+    return new Promise((resolve, reject) => {
+      this.on('loadend', () => resolve(calculateTotalSize(this)));
+      this.on('error', reject);
+    });
+  }
 
-    if (typeof options === 'boolean') {
-      returnsTotalSize = options;
-      options = {};
-    } else {
-      options ??= {};
-      returnsTotalSize = Boolean(returnsTotalSize ?? false);
-    }
+  /**
+   * @param {?Function|Object} [options]
+   */
+  end(options) {
+    if (this.ended || this.allDone) return;
+
+    options ??= {};
 
     const comment = options.comment;
     if (comment == null) {
@@ -444,33 +458,13 @@ class ZipFile extends EventEmitter {
     this.ended = true;
     this.forceZip64Eocd = Boolean(options.forceZip64Format ?? false);
 
-    const loading = Promise.all(this.loadings);
-
-    // Calculate the total size before asynchronously emitting the final stream
-    // according to the original yazl code's flow.
-    // But I think it might be okay or rather better to compute it later...
-    // Is there any reason why it must be calculated beforehand?
-    const result = returnsTotalSize ?
-                   loading.then(() => calculateTotalSize(this)) :
-                   loading.then(() => {});
-
     // all cought up on writing entries
-    const { outputStream } = this;
-    loading.then(() => this.streaming).then(() => {
-      // head for the exit
-      this.offsetOfStartOfCentralDirectory = outputStream.bytesWritten;
-      const entries = this.entries;
-      const totalEntries = entries.length;
-      for (let i = 0; i < totalEntries; ++i) {
-        const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
-        outputStream.write(centralDirectoryRecord);
-      }
-      outputStream.write(getEndOfCentralDirectoryRecord(this));
-      outputStream.end();
-      this.allDone = true;
+    Promise.all(this.loadings).then(async () => {
+      this.loaded = false;
+      this.emit('loadend');
+      await this.streaming;
+      super.end();
     }).catch((err) => this.emit('error', err));
-
-    return result;
   }
 }
 
@@ -479,7 +473,7 @@ class ZipFile extends EventEmitter {
  * @param {Buffer} buffer
  */
 function writeBuffer(zipfile, buffer) {
-  zipfile.outputStream.write(buffer);
+  zipfile.write(buffer);
 }
 
 /**
@@ -492,7 +486,7 @@ async function writeReadStream(zipfile, entry, readStream) {
   const crc32Watcher = new Crc32Watcher();
   readStream = readStream.pipe(crc32Watcher);
   if (entry.compress) readStream = readStream.pipe(new DeflateRaw());
-  readStream.pipe(zipfile.outputStream, { end: false });
+  readStream.pipe(zipfile, { end: false });
   await finished(readStream);
   entry.compressedSize = readStream.bytesWritten;
   entry.crc32 = crc32Watcher.crc32;
@@ -511,10 +505,10 @@ async function writeReadStream(zipfile, entry, readStream) {
  */
 function appendStream(zipfile, entry, writer, ...args) {
   zipfile.streaming = zipfile.streaming.then(async () => {
-    entry.relativeOffsetOfLocalHeader = zipfile.outputStream.bytesWritten;
-    zipfile.outputStream.write(entry.getLocalFileHeader());
+    entry.relativeOffsetOfLocalHeader = zipfile.bytesWritten;
+    zipfile.write(entry.getLocalFileHeader());
     if (writer !== undefined) await writer(zipfile, ...args);
-    zipfile.outputStream.write(entry.getDataDescriptor());
+    zipfile.write(entry.getDataDescriptor());
   }).catch((err) => zipfile.emit('error', err));
 }
 
@@ -571,7 +565,7 @@ function calculateTotalSize(zipfile) {
  */
 function getEndOfCentralDirectoryRecord(zipfile) {
   const { entries: { length: totalEntries },
-          outputStream: { bytesWritten },
+          bytesWritten,
           comment,
           forceZip64Eocd,
           offsetOfStartOfCentralDirectory } = zipfile;
