@@ -325,7 +325,6 @@ class ZipFile extends Transform {
   bytesWritten = 0;
   ended = false; // .end() sets this
   loaded = false; // are all loadings fulfilled after .end()?
-  allDone = false; // set when we've written the last bytes
   forceZip64Eocd = false; // configurable in .end()
   comment = EMPTY_BUFFER;
   streaming = EMPTY_PROMISE;
@@ -343,7 +342,6 @@ class ZipFile extends Transform {
     const eocdr = getEndOfCentralDirectoryRecord(this, centralDirOffset);
     this.bytesWritten += eocdr.length;
     this.push(eocdr);
-    this.allDone = true;
     callback(null);
   }
 
@@ -428,8 +426,8 @@ class ZipFile extends Transform {
    * @returns {Promise<number>}
    */
   async calculateTotalSize() {
-    if (this.allDone) return this.bytesWritten;
-    if (this.loaded)  return calculateTotalSize(this);
+    if (this.writableFinished) return this.bytesWritten;
+    if (this.loaded) return calculateTotalSize(this);
     return new Promise((resolve, reject) => {
       this.on('loadend', () => resolve(calculateTotalSize(this)));
       this.on('error', reject);
@@ -440,7 +438,7 @@ class ZipFile extends Transform {
    * @param {?Function|Object} [options]
    */
   end(options) {
-    if (this.ended || this.allDone) return;
+    if (this.ended || this.writableFinished) return;
 
     options ??= {};
 
