@@ -16,7 +16,7 @@ const DEFLATE_COMPRESSION = 8;
 /** Central directory record fixed size         */ const CDR_FIXED_SIZE   = 46;
 /** ZIP64 extended information extra field size */ const ZIP64_EIEF_SIZE  = 28;
 /** End of central directory record signature   */
-const EOCDR_SIGNATURE  = Uint8Array.of(0x50, 0x4b, 0x05, 0x06);
+const EOCDR_SIGNATURE = Uint8Array.of(0x50, 0x4b, 0x05, 0x06);
 
 const LOCAL_FILE_HEADER_FIXED_SIZE = 30;
 const VERSION_NEEDED_TO_EXTRACT_UTF8 = 20;
@@ -28,7 +28,7 @@ const UNKNOWN_CRC32_AND_FILE_SIZES = 1 << 3;
 const DATA_DESCRIPTOR_SIZE       = 16;
 const ZIP64_DATA_DESCRIPTOR_SIZE = 24;
 
-const EMPTY_BUFFER  = new Uint8Array(0);
+const EMPTY_BUFFER  = Buffer.allocUnsafe(0);
 const EMPTY_PROMISE = Promise.resolve();
 
 const deflateRawPromise = promisify(deflateRaw);
@@ -195,82 +195,116 @@ class Entry {
    * @returns {Buffer}
    */
   getCentralDirectoryRecord() {
-    const fixedSizeStuff = Buffer.allocUnsafe(CDR_FIXED_SIZE);
+    const { fileName, fileComment } = this;
+    const fileNameLength = fileName.length;
+    const fileCommentLength = fileComment.length;
+    const fileNameOffset = CDR_FIXED_SIZE;
     let generalPurposeBitFlag = FILE_NAME_IS_UTF8;
     if (!this.crcAndFileSizeKnown) generalPurposeBitFlag |= UNKNOWN_CRC32_AND_FILE_SIZES;
-
-    let normalCompressedSize = this.compressedSize;
-    let normalUncompressedSize = this.uncompressedSize;
-    let normalRelativeOffsetOfLocalHeader = this.relativeOffsetOfLocalHeader;
-    let versionNeededToExtract;
-    let zeiefBuffer;
     if (this.useZip64Format()) {
-      normalCompressedSize = 0xffffffff;
-      normalUncompressedSize = 0xffffffff;
-      normalRelativeOffsetOfLocalHeader = 0xffffffff;
-      versionNeededToExtract = VERSION_NEEDED_TO_EXTRACT_ZIP64;
+      const zeiefOffset = fileNameOffset + fileNameLength;
+      const fileCommentOffset = zeiefOffset + ZIP64_EIEF_SIZE;
+      const buffer = Buffer.allocUnsafe(fileCommentOffset + fileCommentLength);
+
+      // central file header signature   4 bytes  (0x02014b50)
+      buffer.writeUInt32LE(0x02014b50, 0);
+      // version made by                 2 bytes
+      buffer.writeUInt16LE(VERSION_MADE_BY, 4);
+      // version needed to extract       2 bytes
+      buffer.writeUInt16LE(VERSION_NEEDED_TO_EXTRACT_ZIP64, 6);
+      // general purpose bit flag        2 bytes
+      buffer.writeUInt16LE(generalPurposeBitFlag, 8);
+      // compression method              2 bytes
+      buffer.writeUInt16LE(this.compressionMethod, 10);
+      // last mod file date/time         4 bytes
+      buffer.writeUInt32LE(this.lastMod, 12);
+      // crc-32                          4 bytes
+      buffer.writeUInt32LE(this.crc32, 16);
+      // compressed size                 4 bytes
+      buffer.writeUInt32LE(0xffffffff, 20);
+      // uncompressed size               4 bytes
+      buffer.writeUInt32LE(0xffffffff, 24);
+      // file name length                2 bytes
+      buffer.writeUInt16LE(fileNameLength, 28);
+      // extra field length              2 bytes
+      buffer.writeUInt16LE(ZIP64_EIEF_SIZE, 30);
+      // file comment length             2 bytes
+      buffer.writeUInt16LE(fileCommentLength, 32);
+      // disk number start               2 bytes
+      buffer.writeUInt16LE(0, 34);
+      // internal file attributes        2 bytes
+      buffer.writeUInt16LE(0, 36);
+      // external file attributes        4 bytes
+      buffer.writeUInt32LE(this.externalFileAttributes, 38);
+      // relative offset of local header 4 bytes
+      buffer.writeUInt32LE(0xffffffff, 42);
+
+      // file name                       (variable size)
+      buffer.set(fileName, fileNameOffset);
 
       // ZIP64 extended information extra field
-      zeiefBuffer = Buffer.allocUnsafe(ZIP64_EIEF_SIZE);
       // 0x0001                  2 bytes    Tag for this "extra" block type
-      zeiefBuffer.writeUInt16LE(0x0001, 0);
+      buffer.writeUInt16LE(0x0001, zeiefOffset);
       // Size                    2 bytes    Size of this "extra" block
-      zeiefBuffer.writeUInt16LE(ZIP64_EIEF_SIZE - 4, 2);
+      buffer.writeUInt16LE(ZIP64_EIEF_SIZE - 4, zeiefOffset + 2);
       // Original Size           8 bytes    Original uncompressed file size
-      zeiefBuffer.writeBigUInt64LE(BigInt(this.uncompressedSize), 4);
+      buffer.writeBigUInt64LE(BigInt(this.uncompressedSize), zeiefOffset + 4);
       // Compressed Size         8 bytes    Size of compressed data
-      zeiefBuffer.writeBigUInt64LE(BigInt(this.compressedSize), 12);
+      buffer.writeBigUInt64LE(BigInt(this.compressedSize), zeiefOffset + 12);
       // Relative Header Offset  8 bytes    Offset of local header record
-      zeiefBuffer.writeBigUInt64LE(BigInt(this.relativeOffsetOfLocalHeader), 20);
+      buffer.writeBigUInt64LE(BigInt(this.relativeOffsetOfLocalHeader), zeiefOffset + 20);
       // Disk Start Number       4 bytes    Number of the disk on which this file starts
       // (omit)
+
+      // file comment                    (variable size)
+      buffer.set(fileComment, fileCommentOffset);
+
+      return buffer;
     } else {
-      versionNeededToExtract = VERSION_NEEDED_TO_EXTRACT_UTF8;
-      zeiefBuffer = EMPTY_BUFFER;
+      const fileCommentOffset = CDR_FIXED_SIZE + fileNameLength;
+      const buffer = Buffer.allocUnsafe(fileCommentOffset + fileCommentLength);
+
+      // central file header signature   4 bytes  (0x02014b50)
+      buffer.writeUInt32LE(0x02014b50, 0);
+      // version made by                 2 bytes
+      buffer.writeUInt16LE(VERSION_MADE_BY, 4);
+      // version needed to extract       2 bytes
+      buffer.writeUInt16LE(VERSION_NEEDED_TO_EXTRACT_UTF8, 6);
+      // general purpose bit flag        2 bytes
+      buffer.writeUInt16LE(generalPurposeBitFlag, 8);
+      // compression method              2 bytes
+      buffer.writeUInt16LE(this.compressionMethod, 10);
+      // last mod file date/time         4 bytes
+      buffer.writeUInt32LE(this.lastMod, 12);
+      // crc-32                          4 bytes
+      buffer.writeUInt32LE(this.crc32, 16);
+      // compressed size                 4 bytes
+      buffer.writeUInt32LE(this.compressedSize, 20);
+      // uncompressed size               4 bytes
+      buffer.writeUInt32LE(this.uncompressedSize, 24);
+      // file name length                2 bytes
+      buffer.writeUInt16LE(fileNameLength, 28);
+      // extra field length              2 bytes
+      buffer.writeUInt16LE(0, 30);
+      // file comment length             2 bytes
+      buffer.writeUInt16LE(fileCommentLength, 32);
+      // disk number start               2 bytes
+      buffer.writeUInt16LE(0, 34);
+      // internal file attributes        2 bytes
+      buffer.writeUInt16LE(0, 36);
+      // external file attributes        4 bytes
+      buffer.writeUInt32LE(this.externalFileAttributes, 38);
+      // relative offset of local header 4 bytes
+      buffer.writeUInt32LE(this.relativeOffsetOfLocalHeader, 42);
+
+      // file name                       (variable size)
+      buffer.set(fileName, fileNameOffset);
+
+      // file comment                    (variable size)
+      buffer.set(fileComment, fileCommentOffset);
+  
+      return buffer;
     }
-
-    // central file header signature   4 bytes  (0x02014b50)
-    fixedSizeStuff.writeUInt32LE(0x02014b50, 0);
-    // version made by                 2 bytes
-    fixedSizeStuff.writeUInt16LE(VERSION_MADE_BY, 4);
-    // version needed to extract       2 bytes
-    fixedSizeStuff.writeUInt16LE(versionNeededToExtract, 6);
-    // general purpose bit flag        2 bytes
-    fixedSizeStuff.writeUInt16LE(generalPurposeBitFlag, 8);
-    // compression method              2 bytes
-    fixedSizeStuff.writeUInt16LE(this.compressionMethod, 10);
-    // last mod file date/time         4 bytes
-    fixedSizeStuff.writeUInt32LE(this.lastMod, 12);
-    // crc-32                          4 bytes
-    fixedSizeStuff.writeUInt32LE(this.crc32, 16);
-    // compressed size                 4 bytes
-    fixedSizeStuff.writeUInt32LE(normalCompressedSize, 20);
-    // uncompressed size               4 bytes
-    fixedSizeStuff.writeUInt32LE(normalUncompressedSize, 24);
-    // file name length                2 bytes
-    fixedSizeStuff.writeUInt16LE(this.fileName.length, 28);
-    // extra field length              2 bytes
-    fixedSizeStuff.writeUInt16LE(zeiefBuffer.length, 30);
-    // file comment length             2 bytes
-    fixedSizeStuff.writeUInt16LE(this.fileComment.length, 32);
-    // disk number start               2 bytes
-    fixedSizeStuff.writeUInt16LE(0, 34);
-    // internal file attributes        2 bytes
-    fixedSizeStuff.writeUInt16LE(0, 36);
-    // external file attributes        4 bytes
-    fixedSizeStuff.writeUInt32LE(this.externalFileAttributes, 38);
-    // relative offset of local header 4 bytes
-    fixedSizeStuff.writeUInt32LE(normalRelativeOffsetOfLocalHeader, 42);
-
-    return Buffer.concat([
-      fixedSizeStuff,
-      // file name (variable size)
-      this.fileName,
-      // extra field (variable size)
-      zeiefBuffer,
-      // file comment (variable size)
-      this.fileComment,
-    ]);
   }
 }
 
@@ -572,6 +606,8 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   // ZIP64 format
   const zip64Buffer = Buffer.allocUnsafe(ZIP64_EOCDR_SIZE + ZIP64_EOCDL_SIZE + EOCDR_SIZE + commentLength);
 
+  zip64Buffer.set(eocdrBuffer, ZIP64_EOCDR_SIZE + ZIP64_EOCDL_SIZE);
+
   // ZIP64 End of Central Directory Record
   // zip64 end of central dir signature                                             4 bytes  (0x06064b50)
   zip64Buffer.writeUInt32LE(0x06064b50, 0);
@@ -605,8 +641,6 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   zip64Buffer.writeBigUInt64LE(BigInt(bytesWritten), ZIP64_EOCDR_SIZE + 8);
   // total number of disks                                                    4 bytes
   zip64Buffer.writeUInt32LE(1, ZIP64_EOCDR_SIZE + 16);
-
-  zip64Buffer.set(eocdrBuffer, ZIP64_EOCDR_SIZE + ZIP64_EOCDL_SIZE);
 
   return zip64Buffer;
 }
