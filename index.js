@@ -323,9 +323,8 @@ class ZipFile extends Transform {
   /** @type {Entry[]}   */ entries  = [];
   /** @type {Promise[]} */ loadings = [];
   bytesWritten = 0;
-  offsetOfStartOfCentralDirectory = 0;
   ended = false; // .end() sets this
-  loaded = false;
+  loaded = false; // are all loadings fulfilled after .end()?
   allDone = false; // set when we've written the last bytes
   forceZip64Eocd = false; // configurable in .end()
   comment = EMPTY_BUFFER;
@@ -334,15 +333,14 @@ class ZipFile extends Transform {
 
   _flush(callback) {
     // head for the exit
-    this.offsetOfStartOfCentralDirectory = this.bytesWritten;
-    const entries = this.entries;
+    const { bytesWritten: centralDirOffset, entries } = this;
     const totalEntries = entries.length;
     for (let i = 0; i < totalEntries; ++i) {
       const cdr = entries[i].getCentralDirectoryRecord();
       this.bytesWritten += cdr.length;
       this.push(cdr);
     }
-    const eocdr = getEndOfCentralDirectoryRecord(this);
+    const eocdr = getEndOfCentralDirectoryRecord(this, centralDirOffset);
     this.bytesWritten += eocdr.length;
     this.push(eocdr);
     this.allDone = true;
@@ -463,7 +461,7 @@ class ZipFile extends Transform {
 
     // all cought up on writing entries
     Promise.all(this.loadings).then(async () => {
-      this.loaded = false;
+      this.loaded = true;
       this.emit('loadend');
       await this.streaming;
       super.end();
@@ -564,27 +562,27 @@ function calculateTotalSize(zipfile) {
 
 /**
  * @param {ZipFile} zipfile
+ * @param {number} centralDirOffset
  * @returns {Buffer}
  */
-function getEndOfCentralDirectoryRecord(zipfile) {
+function getEndOfCentralDirectoryRecord(zipfile, centralDirOffset) {
   const { entries: { length: totalEntries },
           bytesWritten,
           comment,
-          forceZip64Eocd,
-          offsetOfStartOfCentralDirectory } = zipfile;
+          forceZip64Eocd } = zipfile;
 
   let needZip64Format = (forceZip64Eocd || totalEntries >= 0xffff);
   const normalTotalEntries = needZip64Format ? 0xffff : totalEntries;
 
-  const sizeOfCentralDirectory = bytesWritten - offsetOfStartOfCentralDirectory;
+  const sizeOfCentralDirectory = bytesWritten - centralDirOffset;
   let normalSizeOfCentralDirectory = sizeOfCentralDirectory;
   if (forceZip64Eocd || sizeOfCentralDirectory >= 0xffffffff) {
     normalSizeOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
   }
 
-  let normalOffsetOfStartOfCentralDirectory = offsetOfStartOfCentralDirectory;
-  if (forceZip64Eocd || offsetOfStartOfCentralDirectory >= 0xffffffff) {
+  let normalOffsetOfStartOfCentralDirectory = centralDirOffset;
+  if (forceZip64Eocd || centralDirOffset >= 0xffffffff) {
     normalOffsetOfStartOfCentralDirectory = 0xffffffff;
     needZip64Format = true;
   }
@@ -638,7 +636,7 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   // size of the central directory                                                  8 bytes
   zip64Buffer.writeBigUInt64LE(BigInt(sizeOfCentralDirectory), 40);
   // offset of start of central directory with respect to the starting disk number  8 bytes
-  zip64Buffer.writeBigUInt64LE(BigInt(offsetOfStartOfCentralDirectory), 48);
+  zip64Buffer.writeBigUInt64LE(BigInt(centralDirOffset), 48);
   // zip64 extensible data sector                                                   (variable size)
   // nothing in the zip64 extensible data sector
 
