@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { EventEmitter } from 'node:events';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Transform } from 'node:stream';
@@ -328,7 +329,7 @@ class Crc32Watcher extends Transform {
   }
 }
 
-class ZipFile {
+class ZipFile extends EventEmitter {
   /** @type {Entry[]}   */ entries  = [];
   /** @type {Promise[]} */ loadings = [];
   outputStream = new ByteCounter();
@@ -354,7 +355,7 @@ class ZipFile {
       if (options.mtime == null) entry.lastMod = dateToDosDateTime(stats.mtime);
       if (options.mode  == null) entry.setFileAttributesMode(stats.mode, false);
       appendStream(this, entry, writeReadStream, entry, createReadStream(realPath));
-    });
+    }).catch((err) => this.emit('error', err));
     this.entries.push(entry);
     this.loadings.push(loading);
   }
@@ -391,7 +392,7 @@ class ZipFile {
     entry.crcAndFileSizeKnown = true;
     this.entries.push(entry);
     if (entry.compress) {
-      this.loadings.push(deflateRawPromise(buffer).then(flush));
+      this.loadings.push(deflateRawPromise(buffer).then(flush).catch((err) => this.emit('error', err)));
     } else {
       flush(buffer);
     }
@@ -412,16 +413,20 @@ class ZipFile {
   }
 
   /**
+   * Instead of taking a callback function, returns a Promise of total size.
    * @param {?Function|Object} [options]
-   * @param {?Function} [finalSizeCallback]
+   * @param {?boolean} [returnsTotalSize]
+   * @returns {Promise<void>|Promise<number>}
    */
-  end(options, finalSizeCallback) {
-    if (this.ended || this.allDone) return;
-    if (typeof options === 'function') {
-      finalSizeCallback = options;
+  end(options, returnsTotalSize) {
+    if (this.ended || this.allDone) return EMPTY_PROMISE;
+
+    if (typeof options === 'boolean') {
+      returnsTotalSize = options;
       options = {};
     } else {
       options ??= {};
+      returnsTotalSize = Boolean(returnsTotalSize ?? false);
     }
 
     const comment = options.comment;
@@ -440,24 +445,32 @@ class ZipFile {
     this.forceZip64Eocd = Boolean(options.forceZip64Format ?? false);
 
     const loading = Promise.all(this.loadings);
-    if (finalSizeCallback != null) {
-      loading.then(() => finalSizeCallback(calculateFinalSize(this)));
-    }
+
+    // Calculate the total size before asynchronously emitting the final stream
+    // according to the original yazl code's flow.
+    // But I think it might be okay or rather better to compute it later...
+    // Is there any reason why it must be calculated beforehand?
+    const result = returnsTotalSize ?
+                   loading.then(() => calculateTotalSize(this)) :
+                   loading.then(() => {});
 
     // all cought up on writing entries
+    const { outputStream } = this;
     loading.then(() => this.streaming).then(() => {
       // head for the exit
-      this.offsetOfStartOfCentralDirectory = this.outputStream.bytesWritten;
+      this.offsetOfStartOfCentralDirectory = outputStream.bytesWritten;
       const entries = this.entries;
       const totalEntries = entries.length;
       for (let i = 0; i < totalEntries; ++i) {
         const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
-        this.outputStream.write(centralDirectoryRecord);
+        outputStream.write(centralDirectoryRecord);
       }
-      this.outputStream.write(getEndOfCentralDirectoryRecord(this));
-      this.outputStream.end();
+      outputStream.write(getEndOfCentralDirectoryRecord(this));
+      outputStream.end();
       this.allDone = true;
-    });
+    }).catch((err) => this.emit('error', err));
+
+    return result;
   }
 }
 
@@ -486,7 +499,7 @@ async function writeReadStream(zipfile, entry, readStream) {
   if (entry.uncompressedSize === -1) {
     entry.uncompressedSize = crc32Watcher.bytesWritten;
   } else if (entry.uncompressedSize !== crc32Watcher.bytesWritten) {
-    throw new Error('file data stream has unexpected number of bytes');
+    throw new RangeError('file data stream has unexpected number of bytes');
   }
 }
 
@@ -502,14 +515,14 @@ function appendStream(zipfile, entry, writer, ...args) {
     zipfile.outputStream.write(entry.getLocalFileHeader());
     if (writer !== undefined) await writer(zipfile, ...args);
     zipfile.outputStream.write(entry.getDataDescriptor());
-  });
+  }).catch((err) => zipfile.emit('error', err));
 }
 
 /**
  * @param {ZipFile} zipfile
  * @returns {number}
  */
-function calculateFinalSize(zipfile) {
+function calculateTotalSize(zipfile) {
   const entries = zipfile.entries;
   const totalEntries = entries.length;
   let pretendOutputCursor = 0;
