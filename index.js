@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer';
-import { EventEmitter } from 'node:events';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Transform } from 'node:stream';
@@ -339,10 +338,13 @@ class ZipFile extends Transform {
     const entries = this.entries;
     const totalEntries = entries.length;
     for (let i = 0; i < totalEntries; ++i) {
-      const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
-      this.push(centralDirectoryRecord);
+      const cdr = entries[i].getCentralDirectoryRecord();
+      this.bytesWritten += cdr.length;
+      this.push(cdr);
     }
-    this.push(getEndOfCentralDirectoryRecord(this));
+    const eocdr = getEndOfCentralDirectoryRecord(this);
+    this.bytesWritten += eocdr.length;
+    this.push(eocdr);
     this.allDone = true;
     callback(null);
   }
@@ -428,7 +430,8 @@ class ZipFile extends Transform {
    * @returns {Promise<number>}
    */
   async calculateTotalSize() {
-    if (this.loaded) return calculateTotalSize(this);
+    if (this.allDone) return this.bytesWritten;
+    if (this.loaded)  return calculateTotalSize(this);
     return new Promise((resolve, reject) => {
       this.on('loadend', () => resolve(calculateTotalSize(this)));
       this.on('error', reject);
