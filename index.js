@@ -449,8 +449,8 @@ class ZipFile {
       // head for the exit
       this.offsetOfStartOfCentralDirectory = this.outputStream.bytesWritten;
       const entries = this.entries;
-      const entriesLength = entries.length;
-      for (let i = 0; i < entriesLength; ++i) {
+      const totalEntries = entries.length;
+      for (let i = 0; i < totalEntries; ++i) {
         const centralDirectoryRecord = entries[i].getCentralDirectoryRecord();
         this.outputStream.write(centralDirectoryRecord);
       }
@@ -511,10 +511,10 @@ function appendStream(zipfile, entry, writer, ...args) {
  */
 function calculateFinalSize(zipfile) {
   const entries = zipfile.entries;
-  const entriesLength = entries.length;
+  const totalEntries = entries.length;
   let pretendOutputCursor = 0;
   let centralDirectorySize = 0;
-  for (let i = 0; i < entriesLength; ++i) {
+  for (let i = 0; i < totalEntries; ++i) {
     const entry = entries[i];
     // compression is too hard to predict
     if (entry.compress) return -1;
@@ -542,7 +542,7 @@ function calculateFinalSize(zipfile) {
   let endOfCentralDirectorySize = EOCDR_SIZE + zipfile.comment.length;
   if (
     (zipfile.forceZip64Eocd) ||
-    (entriesLength >= 0xffff) ||
+    (totalEntries >= 0xffff) ||
     (centralDirectorySize >= 0xffff) ||
     (pretendOutputCursor >= 0xffffffff)
   ) {
@@ -557,14 +557,14 @@ function calculateFinalSize(zipfile) {
  * @returns {Buffer}
  */
 function getEndOfCentralDirectoryRecord(zipfile) {
-  const { entries: { length: entriesLength },
+  const { entries: { length: totalEntries },
           outputStream: { bytesWritten },
           comment,
           forceZip64Eocd,
           offsetOfStartOfCentralDirectory } = zipfile;
 
-  let needZip64Format = (forceZip64Eocd || entriesLength >= 0xffff);
-  const normalEntriesLength = needZip64Format ? 0xffff : entriesLength;
+  let needZip64Format = (forceZip64Eocd || totalEntries >= 0xffff);
+  const normalTotalEntries = needZip64Format ? 0xffff : totalEntries;
 
   const sizeOfCentralDirectory = bytesWritten - offsetOfStartOfCentralDirectory;
   let normalSizeOfCentralDirectory = sizeOfCentralDirectory;
@@ -589,9 +589,9 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   // number of the disk with the start of the central directory  2 bytes
   eocdrBuffer.writeUInt16LE(0, 6);
   // total number of entries in the central directory on this disk  2 bytes
-  eocdrBuffer.writeUInt16LE(normalEntriesLength, 8);
+  eocdrBuffer.writeUInt16LE(normalTotalEntries, 8);
   // total number of entries in the central directory   2 bytes
-  eocdrBuffer.writeUInt16LE(normalEntriesLength, 10);
+  eocdrBuffer.writeUInt16LE(normalTotalEntries, 10);
   // size of the central directory                      4 bytes
   eocdrBuffer.writeUInt32LE(normalSizeOfCentralDirectory, 12);
   // offset of start of central directory with respect to the starting disk number  4 bytes
@@ -622,9 +622,9 @@ function getEndOfCentralDirectoryRecord(zipfile) {
   // number of the disk with the start of the central directory                     4 bytes
   zip64Buffer.writeUInt32LE(0, 20);
   // total number of entries in the central directory on this disk                  8 bytes
-  zip64Buffer.writeBigUInt64LE(BigInt(entriesLength), 24);
+  zip64Buffer.writeBigUInt64LE(BigInt(totalEntries), 24);
   // total number of entries in the central directory                               8 bytes
-  zip64Buffer.writeBigUInt64LE(BigInt(entriesLength), 32);
+  zip64Buffer.writeBigUInt64LE(BigInt(totalEntries), 32);
   // size of the central directory                                                  8 bytes
   zip64Buffer.writeBigUInt64LE(BigInt(sizeOfCentralDirectory), 40);
   // offset of start of central directory with respect to the starting disk number  8 bytes
